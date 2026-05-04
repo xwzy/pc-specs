@@ -1,0 +1,28 @@
+# Node / Vite
+node_modules/
+dist/
+.cache/
+.tmp/
+.eslintcache
+*.log
+.DS_Store
+*.tsbuildinfo
+.tsbuild-node/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/Cargo.lock.bak
+src-tauri/.cargo/
+.tauri/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+Thumbs.db
+
+# Env
+.env
+.env.local
