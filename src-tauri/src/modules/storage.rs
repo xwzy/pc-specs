@@ -328,7 +328,9 @@ fn platform_smart_fallback() -> Vec<SmartRow> {
 
     // FailurePredictStatus 在 ROOT\WMI 命名空间。COM 已经被首次 COMLibrary::new() 初始化过，
     // 这里使用 assume_initialized() 复用线程内已有的 COM 状态再开第二个连接。
-    let com2 = COMLibrary::assume_initialized();
+    // SAFETY: 同一线程内上面 `COMLibrary::new()` 已成功初始化 COM；wmi::COMLibrary 不会在 drop 时
+    // 反初始化 COM，所以这里复用线程内 COM 状态是安全的。
+    let com2 = unsafe { COMLibrary::assume_initialized() };
     let predicts: Vec<FailurePredict> = if let Ok(conn) = WMIConnection::with_namespace_path("ROOT\\WMI", com2) {
         conn.raw_query(
             "SELECT InstanceName, PredictFailure FROM MSStorageDriver_FailurePredictStatus",

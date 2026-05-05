@@ -1,7 +1,7 @@
 name: Build
 
-# 推到 main 时构建 6 个平台 × 架构组合的 Tauri 安装包：
-#   - macOS  arm64 / amd64
+# 推到 main 时构建 5 个平台 × 架构组合的 Tauri 安装包：
+#   - macOS  arm64
 #   - Linux  arm64 / amd64
 #   - Windows arm64 / amd64
 #
@@ -36,10 +36,6 @@ jobs:
           - label: macos-arm64
             runner: macos-14            # Apple Silicon (M-series)
             target: aarch64-apple-darwin
-            os: macos
-          - label: macos-amd64
-            runner: macos-13            # Intel
-            target: x86_64-apple-darwin
             os: macos
 
           # ---- Linux ----
