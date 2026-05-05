@@ -1,6 +1,7 @@
-use crate::model::{MonitorTick, SensorReading};
+use crate::model::{InterfaceTick, MonitorTick, SensorReading};
 use crate::modules;
 use crate::state::{MonitorSys, SharedSys};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind};
@@ -9,14 +10,29 @@ use tokio::sync::Notify;
 
 pub const MONITOR_TICK_EVENT: &str = "monitor://tick";
 
+/// task 退出时（正常 break / panic unwind）会触发 Drop，把 alive 标记翻成 false。
+/// `start_monitor` 用这个标记判断"slot 残留但 task 已死"，避免被幂等卡住。
+struct AliveGuard(Arc<AtomicBool>);
+impl Drop for AliveGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 pub fn spawn_monitor(
     app: AppHandle,
     shared: Arc<SharedSys>,
     monitor: Arc<MonitorSys>,
     interval_ms: u64,
     stop: Arc<Notify>,
+    alive: Arc<AtomicBool>,
 ) {
+    alive.store(true, Ordering::SeqCst);
     tokio::spawn(async move {
+        // 把 alive 标志的清零放到 RAII guard 里，无论是 select! break 还是任意
+        // sample/emit 出 panic，guard.drop 都会清零。
+        let _alive_guard = AliveGuard(alive);
+
         let interval_ms = interval_ms.max(500);
         let interval = Duration::from_millis(interval_ms);
         let mut ticker = tokio::time::interval(interval);
@@ -49,6 +65,8 @@ pub fn spawn_monitor(
                     if let Err(e) = app.emit(MONITOR_TICK_EVENT, &tick) {
                         tracing::warn!("emit failed: {e}");
                     }
+                    // 顺便驱动托盘的实时文字 / tooltip 更新。开销 < 100us。
+                    crate::tray::on_tick(&app, &tick);
                 }
             }
         }
@@ -91,16 +109,33 @@ fn sample(
 
     // 网卡：使用 monitor 独立的 Networks 实例，refresh() 后 received() 是
     // 自上次 refresh（即上一次 monitor tick）以来的累计 bytes —— 严格匹配 elapsed。
-    let (rx, tx) = {
+    // 同时构建 per_interface 列表，让 Network 页能拿到每张网卡的实时 ↑↓。
+    let (rx, tx, per_interface) = {
         let mut nets = monitor.networks.lock();
         nets.refresh();
         let mut rx = 0u64;
         let mut tx = 0u64;
-        for (_, d) in nets.iter() {
-            rx = rx.saturating_add(d.received());
-            tx = tx.saturating_add(d.transmitted());
+        let mut per: Vec<InterfaceTick> = Vec::with_capacity(nets.iter().count());
+        for (name, d) in nets.iter() {
+            let r_delta = d.received();
+            let w_delta = d.transmitted();
+            rx = rx.saturating_add(r_delta);
+            tx = tx.saturating_add(w_delta);
+            let (r_bps, w_bps) = if has_prev {
+                (
+                    ((r_delta as f64) / elapsed_secs).round() as u64,
+                    ((w_delta as f64) / elapsed_secs).round() as u64,
+                )
+            } else {
+                (0, 0)
+            };
+            per.push(InterfaceTick {
+                name: name.to_string(),
+                rx_bps: r_bps,
+                tx_bps: w_bps,
+            });
         }
-        (rx, tx)
+        (rx, tx, per)
     };
     let net_rx_bps = if has_prev {
         ((rx as f64) / elapsed_secs).round() as u64
@@ -133,6 +168,7 @@ fn sample(
         disk_write_bps: disk_w,
         gpu_utilizations: Vec::new(),
         temperatures: sensors_cache.to_vec(),
+        per_interface,
     }
 }
 
@@ -178,22 +214,22 @@ fn sample_disk_io(monitor: &Arc<MonitorSys>, elapsed_secs: f64) -> (u64, u64) {
 }
 
 #[cfg(target_os = "linux")]
-fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
+pub(crate) fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
     read_diskstats()
 }
 
 #[cfg(target_os = "windows")]
-fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
+pub(crate) fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
     read_perf_disk_bytes()
 }
 
 #[cfg(target_os = "macos")]
-fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
+pub(crate) fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
     read_macos_iostat()
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
+pub(crate) fn read_platform_diskstats() -> Vec<(String, u64, u64)> {
     Vec::new()
 }
 

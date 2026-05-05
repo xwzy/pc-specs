@@ -204,6 +204,7 @@ const dict = {
     net_per_iface_hint: "实时聚合速率请见上方吞吐图表（按所有接口求和）。",
     net_rx_total: "已接收",
     net_tx_total: "已发送",
+    net_iface_live: "实时速率",
 
     // ---- Display 页 ----
     disp_count_suffix: "个显示器",
@@ -298,6 +299,11 @@ const dict = {
     export_sensitive_off: "已隐藏敏感信息（MAC / 序列号 / 主机名 等）。",
     export_preview: "预览",
     export_empty_hint: "点击上面任一按钮生成导出内容",
+    export_btn_png: "PNG 长图",
+    export_png_rendering: "渲染中…",
+    export_png_done: "PNG 已保存",
+    export_png_error: "PNG 导出失败",
+    export_png_hint: "PNG 长图适合发到群 / 论坛分享，固定 1200px 宽，深色风格。",
 
     // ---- Settings 页 ----
     settings_title: "设置",
@@ -323,6 +329,18 @@ const dict = {
     settings_export_sensitive: "导出包含敏感信息",
     settings_export_sensitive_hint: "MAC、序列号、BIOS 序列号、环境变量名等。默认关闭。",
     settings_export_section: "导出",
+    settings_tray_section: "系统托盘",
+    settings_tray_hint: "选择托盘菜单里实时显示哪些指标，每秒自动刷新。",
+    settings_tray_show_cpu: "显示 CPU 占用",
+    settings_tray_show_memory: "显示内存占用",
+    settings_tray_show_disk: "显示磁盘读写速率",
+    settings_tray_show_network: "显示网络上下行",
+    settings_tray_show_temperature: "显示最高温度",
+    settings_tray_macos_title: "在 macOS 状态栏图标旁显示网速",
+    settings_tray_macos_title_hint: "iStat Menus 风格：状态栏直接显示 ↓/↑（仅 macOS）。",
+    settings_floating_section: "桌面悬浮窗",
+    settings_floating_net: "网速悬浮窗",
+    settings_floating_net_hint: "永远置于顶层的小条，显示当前 ↓/↑。可拖动，双击关闭。",
     settings_about_desc:
       "一款面向游戏发烧友与编程极客的跨平台电脑配置查看与监控工具。",
     settings_about_privacy:
@@ -533,6 +551,7 @@ const dict = {
     net_per_iface_hint: "See Throughput chart above for live aggregated rate (sum of all interfaces).",
     net_rx_total: "RX total",
     net_tx_total: "TX total",
+    net_iface_live: "Live rate",
 
     // ---- Display page ----
     disp_count_suffix: "display(s)",
@@ -631,6 +650,12 @@ const dict = {
       "Sensitive data redacted (MAC / serial / hostname …).",
     export_preview: "Preview",
     export_empty_hint: "Click any button above to generate the report",
+    export_btn_png: "PNG poster",
+    export_png_rendering: "Rendering…",
+    export_png_done: "PNG saved",
+    export_png_error: "PNG export failed",
+    export_png_hint:
+      "Long-form PNG poster, 1200px wide, dark theme — perfect for forum / chat sharing.",
 
     // ---- Settings page ----
     settings_title: "Settings",
@@ -658,6 +683,21 @@ const dict = {
     settings_export_sensitive_hint:
       "MAC, serial numbers, BIOS serial, env keys. Off by default.",
     settings_export_section: "Export",
+    settings_tray_section: "System tray",
+    settings_tray_hint:
+      "Pick which live metrics show up in the tray menu. Auto-refresh every tick.",
+    settings_tray_show_cpu: "Show CPU usage",
+    settings_tray_show_memory: "Show memory usage",
+    settings_tray_show_disk: "Show disk read/write",
+    settings_tray_show_network: "Show network ↓/↑",
+    settings_tray_show_temperature: "Show max temperature",
+    settings_tray_macos_title: "Show net speed in macOS menu bar",
+    settings_tray_macos_title_hint:
+      "iStat-style ↓/↑ next to the tray icon (macOS only).",
+    settings_floating_section: "Desktop widgets",
+    settings_floating_net: "Net speed floater",
+    settings_floating_net_hint:
+      "Always-on-top mini bar showing live ↓/↑. Drag to move, double-click to close.",
     settings_about_desc:
       "A cross-platform PC config viewer for gaming enthusiasts and programming geeks.",
     settings_about_privacy:

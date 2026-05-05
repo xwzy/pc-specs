@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for the main window.",
-  "windows": ["main"],
+  "windows": ["main", "floating-net-speed"],
   "permissions": [
     "core:default",
     "clipboard-manager:allow-write-text",

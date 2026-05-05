@@ -21,8 +21,7 @@ pub fn collect(_shared: &Arc<SharedSys>) -> Vec<SensorReading> {
     }
     out.extend(crate::platform::extra_sensors());
 
-    // 去重：(kind, label) 作为 key；保留首次出现的（sysinfo 优先），
-    // 但若值显著不同（差 > 1°C），保留两条以体现来源差异。
+    // 去重：(kind, label_lower) 作为 key；保留首次出现的（sysinfo 优先于 platform extras）。
     let mut seen: HashSet<(String, String)> = HashSet::new();
     out.retain(|s| seen.insert((s.kind.clone(), s.label.to_lowercase())));
     out

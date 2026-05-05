@@ -1,5 +1,6 @@
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 use sysinfo::{Disks, Networks, System};
@@ -72,6 +73,14 @@ pub struct AppState {
     pub sys: Arc<SharedSys>,
     pub monitor: Arc<MonitorSys>,
     pub monitor_stop: Mutex<Option<Arc<Notify>>>,
+    /// 当前正在运行的 monitor 任务的 interval。用于 `start_monitor` 幂等：
+    /// 多个窗口（主窗口 / 悬浮窗）都可能调 `start_monitor`，相同 interval 不应当
+    /// 反复杀线程重启 —— 否则每次都会丢 elapsed 基线，BPS 显示首次为 0。
+    pub monitor_interval_ms: Mutex<Option<u64>>,
+    /// monitor task 的"还活着"标志。由 task 内部一个 Drop guard 维护：task 正常
+    /// 退出 / panic unwind 时都会被 set false，让下次 `start_monitor` 能识别"slot
+    /// 残留但 task 实际已死"的情况，重启监控而不是被幂等卡住。
+    pub monitor_alive: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -80,6 +89,8 @@ impl AppState {
             sys: Arc::new(SharedSys::new()),
             monitor: Arc::new(MonitorSys::new()),
             monitor_stop: Mutex::new(None),
+            monitor_interval_ms: Mutex::new(None),
+            monitor_alive: Mutex::new(None),
         }
     }
 }

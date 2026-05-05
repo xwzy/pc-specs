@@ -509,8 +509,8 @@ fn read_dns_servers() -> Vec<String> {
 /// 查询公网 IP。仅当用户在设置中显式启用 publicIpEnabled 时才会被调用。
 ///
 /// - 使用 HTTPS（rustls），由 ureq 提供 TLS handshake；不再依赖系统 OpenSSL。
-/// - 多个备用域名（ipify / icanhazip / ifconfig.me），首个成功即返回。
-/// - 总超时 ≤ 5s（连接 + 读各 2.5s）。
+/// - 多个备用域名（ipify / ifconfig.co / icanhazip），首个成功即返回。
+/// - 单个 endpoint 上限 ~3s；最坏情况 3 个 endpoint 全部 fail 时总耗时 ~9s。
 pub fn fetch_public_ip() -> Option<String> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(3))

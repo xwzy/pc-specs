@@ -153,12 +153,13 @@ export default function Dashboard() {
               <div className="mt-3">
                 <Bar value={storagePct} />
               </div>
+              {/* 单盘 BPS 后端尚未拆分（storage::collect 永远返回 0），用 monitor tick 的磁盘聚合速率代替。 */}
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-text-secondary font-mono">
                 <span>
-                  {t("dash_io_read")} {fmt.netSpeed(primaryStorage.read_bytes_per_sec)}
+                  {t("dash_io_read")} {fmt.netSpeed(latest?.disk_read_bps ?? 0)}
                 </span>
                 <span>
-                  {t("dash_io_write")} {fmt.netSpeed(primaryStorage.write_bytes_per_sec)}
+                  {t("dash_io_write")} {fmt.netSpeed(latest?.disk_write_bps ?? 0)}
                 </span>
               </div>
             </>

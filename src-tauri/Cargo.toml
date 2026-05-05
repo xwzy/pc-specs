@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -38,6 +38,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 battery = "0.7"
 # 用于"查询公网 IP"的可选 HTTPS 客户端。rustls feature 避免依赖系统 OpenSSL。
 ureq = { version = "2", default-features = false, features = ["tls"] }
+# 本地 HTTP 服务器（局域网采集）。axum/tower-http 复用 tokio 运行时，
+# 不增加额外异步运行时；只开必要 features，控制二进制体积。
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "matched-path", "tracing"] }
+tower-http = { version = "0.6", default-features = false, features = ["cors", "limit", "trace", "timeout"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.14"

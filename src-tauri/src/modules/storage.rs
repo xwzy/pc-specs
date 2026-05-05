@@ -341,18 +341,25 @@ fn platform_smart_fallback() -> Vec<SmartRow> {
     };
 
     let mut out = Vec::new();
-    for d in drives {
+    // PredictFailure 的 InstanceName 形如 "SCSI\\DISK&VEN_..."；不能与 DeviceID 直接字符串匹配。
+    // 多盘机器若按 find_map 取第一条会让所有盘共用同一份 health（误判）。
+    // 这里按"两表行数相等才按下标对应"的保守策略：
+    //   - drives.len() == predicts.len(): 顺序对齐（WMI 在大部分场景下对齐）
+    //   - 行数不等: 不标记 health，只保留 device + serial
+    let aligned = drives.len() == predicts.len() && !drives.is_empty();
+    for (i, d) in drives.into_iter().enumerate() {
         let model = d.model.unwrap_or_default();
         let serial = d
             .serial_number
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        // PredictFailure 的 InstanceName 形如 "SCSI\\DISK&VEN_..."；与 DeviceID 不直接匹配，
-        // 但通常各盘只有一条 PredictFailure，且顺序大致与 Win32_DiskDrive 对应。
-        let health = predicts
-            .iter()
-            .find_map(|p| p.predict_failure)
-            .map(|f| if f { "Failing".to_string() } else { "OK".to_string() });
+        let health = if aligned {
+            predicts[i]
+                .predict_failure
+                .map(|f| if f { "Failing".to_string() } else { "OK".to_string() })
+        } else {
+            None
+        };
         out.push(SmartRow {
             device: d.device_id.unwrap_or(model),
             health,

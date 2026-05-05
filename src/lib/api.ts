@@ -122,6 +122,37 @@ export async function saveExport(path: string, content: string): Promise<void> {
   return invoke("save_export", { path, content });
 }
 
+export interface TraySettings {
+  show_cpu: boolean;
+  show_memory: boolean;
+  show_disk: boolean;
+  show_network: boolean;
+  show_temperature: boolean;
+  macos_show_title: boolean;
+}
+
+export async function applyTraySettings(settings: TraySettings): Promise<void> {
+  if (!isTauri) return;
+  return invoke("apply_tray_settings", { settings });
+}
+
+export async function setFloatingNetSpeed(enabled: boolean): Promise<void> {
+  if (!isTauri) return;
+  return invoke("set_floating_net_speed", { enabled });
+}
+
+export async function closeFloatingWindow(label: string): Promise<void> {
+  if (!isTauri) return;
+  return invoke("close_floating_window", { label });
+}
+
+export async function listenFloatingNetSpeedClosed(
+  cb: () => void,
+): Promise<UnlistenFn> {
+  if (!isTauri) return () => undefined;
+  return listen<unknown>("floating://net-speed-closed", () => cb());
+}
+
 export async function listenMonitor(
   cb: (tick: MonitorTick) => void,
 ): Promise<UnlistenFn> {
@@ -149,6 +180,10 @@ function mockTick(): MonitorTick {
     gpu_utilizations: [Math.random() * 100],
     temperatures: [
       { source: "mock", label: "CPU Package", kind: "temperature", value: 50 + Math.random() * 20, unit: "C" },
+    ],
+    per_interface: [
+      { name: "en0", rx_bps: Math.random() * 2 * 1024 ** 2, tx_bps: Math.random() * 512 * 1024 },
+      { name: "lo0", rx_bps: 0, tx_bps: 0 },
     ],
   };
 }

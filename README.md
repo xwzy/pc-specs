@@ -3,7 +3,7 @@
 > A cross-platform PC configuration viewer for gaming enthusiasts and programming geeks.
 > Windows · macOS · Linux · 单包 < 15MB · 100% 本地。
 
-设计文档：`docs/design.md` · 技术方案：`docs/tech.md` · UI 设计：`docs/ui.md`
+设计文档：`docs/design.md` · 技术方案：`docs/tech.md` · UI 设计：`docs/ui.md` · 外部 API：`docs/api.md`
 
 ## 技术栈
 
@@ -42,11 +42,14 @@ pnpm dev
 
 - Dashboard 总览（封面 + 关键指标卡）
 - CPU / GPU / Memory / Storage / Motherboard / OS / Network / Display / Sensors / Battery / Peripherals 详情页
-- 实时监控（多曲线 + 各核柱图 + 温度堆叠）
+- 实时监控（多曲线 + 各核柱图 + 温度堆叠 + 各网卡实时 BPS）
 - 开发环境探测（Languages / PM / VCS / Editors / Containers / Shells）
-- 一键导出 Markdown / JSON
+- 一键导出 Markdown / JSON / **PNG 长图**（适合发分享）
+- **系统托盘常驻**：菜单实时显示 CPU / 内存 / 磁盘 / 网络 / 温度，关闭主窗口仍后台运行；macOS 状态栏支持显示实时网速文字
+- **桌面网速悬浮窗**：始终置顶的极简小条，可拖动，可在设置里启用 / 关闭
 - 深色 / 浅色主题、Geek Mode、采样间隔可调
 - 国际化基础（中 / 英）
+- **本地 HTTP 采集服务**：`0.0.0.0:16089`，方便其他机器实时拉取本机指标（详见 `docs/api.md`）
 
 ## 路线图
 

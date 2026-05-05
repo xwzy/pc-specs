@@ -1,12 +1,21 @@
 import { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Logo } from "@/components/ui/Logo";
-import { useSettings, useT } from "@/lib/store";
+import { useSettings, useT, type TraySettings } from "@/lib/store";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { getPublicIp } from "@/lib/api";
 import type { Lang } from "@/lib/i18n";
 
 const INTERVALS = [500, 1000, 2000, 5000];
+
+// `navigator.platform` 在新版浏览器是 deprecated 但 Tauri webview 仍可靠返回。
+// 双保险：同时看 userAgent，兼容个别隐私模式 / WebView 关闭 platform 的情况。
+const IS_MAC = (() => {
+  if (typeof navigator === "undefined") return false;
+  const platform = navigator.platform || "";
+  const ua = navigator.userAgent || "";
+  return /Mac|Darwin/i.test(platform) || /Mac OS X|Macintosh/i.test(ua);
+})();
 
 export default function SettingsPage() {
   const t = useT();
@@ -30,6 +39,10 @@ export default function SettingsPage() {
   const setNetSpeedUnit = useSettings((s) => s.setNetSpeedUnit);
   const exportSensitive = useSettings((s) => s.exportSensitive);
   const setExportSensitive = useSettings((s) => s.setExportSensitive);
+  const tray = useSettings((s) => s.tray);
+  const setTray = useSettings((s) => s.setTray);
+  const floatingNetSpeed = useSettings((s) => s.floatingNetSpeed);
+  const setFloatingNetSpeed = useSettings((s) => s.setFloatingNetSpeed);
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -134,6 +147,62 @@ export default function SettingsPage() {
         </Row>
       </Card>
 
+      <Card title={t("settings_tray_section")}>
+        <div className="text-text-tertiary text-xs pb-2">{t("settings_tray_hint")}</div>
+        <TrayToggleRow
+          label={t("settings_tray_show_cpu")}
+          checked={tray.show_cpu}
+          onToggle={() => setTray({ show_cpu: !tray.show_cpu })}
+        />
+        <TrayToggleRow
+          label={t("settings_tray_show_memory")}
+          checked={tray.show_memory}
+          onToggle={() => setTray({ show_memory: !tray.show_memory })}
+        />
+        <TrayToggleRow
+          label={t("settings_tray_show_disk")}
+          checked={tray.show_disk}
+          onToggle={() => setTray({ show_disk: !tray.show_disk })}
+        />
+        <TrayToggleRow
+          label={t("settings_tray_show_network")}
+          checked={tray.show_network}
+          onToggle={() => setTray({ show_network: !tray.show_network })}
+        />
+        <TrayToggleRow
+          label={t("settings_tray_show_temperature")}
+          checked={tray.show_temperature}
+          onToggle={() => setTray({ show_temperature: !tray.show_temperature })}
+        />
+        {IS_MAC && (
+          <TrayToggleRow
+            label={t("settings_tray_macos_title")}
+            hint={t("settings_tray_macos_title_hint")}
+            checked={tray.macos_show_title}
+            onToggle={() =>
+              setTray({ macos_show_title: !tray.macos_show_title } as Partial<TraySettings>)
+            }
+          />
+        )}
+      </Card>
+
+      <Card title={t("settings_floating_section")}>
+        <Row label={t("settings_floating_net")} hint={t("settings_floating_net_hint")}>
+          <button
+            type="button"
+            onClick={() => setFloatingNetSpeed(!floatingNetSpeed)}
+            className={
+              "px-3 py-1.5 text-xs rounded-md border font-mono uppercase " +
+              (floatingNetSpeed
+                ? "bg-accent/10 border-accent/40 text-accent"
+                : "bg-bg-surface border-border text-text-secondary")
+            }
+          >
+            {floatingNetSpeed ? t("common_on") : t("common_off")}
+          </button>
+        </Row>
+      </Card>
+
       <Card title={t("settings_export_section")}>
         <Row label={t("settings_export_sensitive")} hint={t("settings_export_sensitive_hint")}>
           <button
@@ -234,6 +303,36 @@ interface SegmentedProps {
   options: Array<{ value: string; label: string }>;
   value: string;
   onChange: (v: string) => void;
+}
+
+interface TrayToggleRowProps {
+  label: React.ReactNode;
+  hint?: React.ReactNode;
+  checked: boolean;
+  onToggle: () => void;
+}
+
+function TrayToggleRow({ label, hint, checked, onToggle }: TrayToggleRowProps) {
+  return (
+    <div className="flex items-center justify-between py-1.5 gap-4">
+      <div className="min-w-0">
+        <div className="text-text-primary text-sm">{label}</div>
+        {hint ? <div className="text-text-tertiary text-xs mt-0.5">{hint}</div> : null}
+      </div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={
+          "shrink-0 px-3 py-1 text-xs rounded-md border font-mono uppercase " +
+          (checked
+            ? "bg-accent/10 border-accent/40 text-accent"
+            : "bg-bg-surface border-border text-text-secondary")
+        }
+      >
+        {checked ? "ON" : "OFF"}
+      </button>
+    </div>
+  );
 }
 
 function Segmented({ options, value, onChange }: SegmentedProps) {

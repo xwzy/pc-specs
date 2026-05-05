@@ -7,6 +7,25 @@ export type TempUnit = "C" | "F";
 export type ByteUnit = "binary" | "decimal";
 export type NetSpeedUnit = "byte" | "bit";
 
+export interface TraySettings {
+  show_cpu: boolean;
+  show_memory: boolean;
+  show_disk: boolean;
+  show_network: boolean;
+  show_temperature: boolean;
+  /** 仅 macOS 状态栏图标旁显示文字，其它平台忽略 */
+  macos_show_title: boolean;
+}
+
+export const defaultTraySettings: TraySettings = {
+  show_cpu: true,
+  show_memory: true,
+  show_disk: false,
+  show_network: true,
+  show_temperature: true,
+  macos_show_title: false,
+};
+
 interface Settings {
   theme: Theme;
   geekMode: boolean;
@@ -18,6 +37,8 @@ interface Settings {
   byteUnit: ByteUnit;
   netSpeedUnit: NetSpeedUnit;
   exportSensitive: boolean;
+  tray: TraySettings;
+  floatingNetSpeed: boolean;
   setTheme: (t: Theme) => void;
   toggleGeek: () => void;
   setMonitorInterval: (ms: number) => void;
@@ -28,6 +49,8 @@ interface Settings {
   setByteUnit: (u: ByteUnit) => void;
   setNetSpeedUnit: (u: NetSpeedUnit) => void;
   setExportSensitive: (b: boolean) => void;
+  setTray: (patch: Partial<TraySettings>) => void;
+  setFloatingNetSpeed: (b: boolean) => void;
 }
 
 const STORAGE_KEY = "pc-specs.settings";
@@ -42,6 +65,8 @@ interface PersistedSettings {
   byteUnit: ByteUnit;
   netSpeedUnit: NetSpeedUnit;
   exportSensitive: boolean;
+  tray: TraySettings;
+  floatingNetSpeed: boolean;
 }
 
 function loadInitial(): PersistedSettings {
@@ -55,6 +80,8 @@ function loadInitial(): PersistedSettings {
     byteUnit: "binary",
     netSpeedUnit: "byte",
     exportSensitive: false,
+    tray: { ...defaultTraySettings },
+    floatingNetSpeed: false,
   };
   if (typeof window === "undefined") {
     return fallback;
@@ -63,6 +90,7 @@ function loadInitial(): PersistedSettings {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedSettings>;
+    const tray = { ...defaultTraySettings, ...(parsed.tray ?? {}) };
     return {
       theme: parsed.theme === "light" ? "light" : "dark",
       geekMode: !!parsed.geekMode,
@@ -73,6 +101,8 @@ function loadInitial(): PersistedSettings {
       byteUnit: parsed.byteUnit === "decimal" ? "decimal" : "binary",
       netSpeedUnit: parsed.netSpeedUnit === "bit" ? "bit" : "byte",
       exportSensitive: !!parsed.exportSensitive,
+      tray,
+      floatingNetSpeed: !!parsed.floatingNetSpeed,
     };
   } catch {
     return fallback;
@@ -106,6 +136,8 @@ function snapshot(get: () => Settings): PersistedSettings {
     byteUnit: s.byteUnit,
     netSpeedUnit: s.netSpeedUnit,
     exportSensitive: s.exportSensitive,
+    tray: s.tray,
+    floatingNetSpeed: s.floatingNetSpeed,
   };
 }
 
@@ -157,6 +189,14 @@ export const useSettings = create<Settings>((set, get) => ({
   },
   setExportSensitive: (exportSensitive) => {
     set({ exportSensitive });
+    persist(snapshot(get));
+  },
+  setTray: (patch) => {
+    set({ tray: { ...get().tray, ...patch } });
+    persist(snapshot(get));
+  },
+  setFloatingNetSpeed: (floatingNetSpeed) => {
+    set({ floatingNetSpeed });
     persist(snapshot(get));
   },
 }));

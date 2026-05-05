@@ -3,6 +3,7 @@ use crate::model::*;
 use crate::modules;
 use crate::monitor;
 use crate::state::AppState;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::Notify;
@@ -115,20 +116,34 @@ pub async fn start_monitor(
 ) -> Result<(), String> {
     {
         let mut slot = state.monitor_stop.lock();
+        let mut interval_slot = state.monitor_interval_ms.lock();
+        let mut alive_slot = state.monitor_alive.lock();
+        // 幂等：若已经在以相同 interval 运行（主窗口启动后悬浮窗也会调一次），且
+        // task 还活着，跳过重启 —— 否则每次都 notify_waiters() 杀线程，丢失 elapsed
+        // 基线，第一帧 BPS 显示为 0。
+        let task_alive = alive_slot
+            .as_ref()
+            .map(|a| a.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        if slot.is_some() && *interval_slot == Some(interval_ms) && task_alive {
+            return Ok(());
+        }
         if let Some(prev) = slot.take() {
             prev.notify_waiters();
         }
         let stop = Arc::new(Notify::new());
+        let alive = Arc::new(AtomicBool::new(false));
         *slot = Some(stop.clone());
+        *interval_slot = Some(interval_ms);
+        *alive_slot = Some(alive.clone());
         let shared = state.sys.clone();
         let mon = state.monitor.clone();
-        // 重启 monitor 时清空采样基线，让首次 tick 不会用上一次会话的旧 elapsed。
         {
             let mut last = mon.last_sample_at.lock();
             *last = None;
             mon.diskstats_prev.lock().clear();
         }
-        monitor::spawn_monitor(app, shared, mon, interval_ms, stop);
+        monitor::spawn_monitor(app, shared, mon, interval_ms, stop, alive);
     }
     Ok(())
 }
@@ -136,9 +151,13 @@ pub async fn start_monitor(
 #[tauri::command]
 pub async fn stop_monitor(state: State<'_, AppState>) -> Result<(), String> {
     let mut slot = state.monitor_stop.lock();
+    let mut interval_slot = state.monitor_interval_ms.lock();
+    let mut alive_slot = state.monitor_alive.lock();
     if let Some(prev) = slot.take() {
         prev.notify_waiters();
     }
+    *interval_slot = None;
+    *alive_slot = None;
     Ok(())
 }
 
@@ -175,6 +194,32 @@ pub async fn export_json(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn apply_tray_settings(
+    app: AppHandle,
+    settings: crate::tray::TraySettings,
+) -> Result<(), String> {
+    crate::tray::apply_settings(&app, settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_floating_net_speed(app: AppHandle, enabled: bool) -> Result<(), String> {
+    crate::floating::set_net_speed_window(&app, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn close_floating_window(app: AppHandle, label: String) -> Result<(), String> {
+    // 仅允许关闭已知的悬浮窗 label，避免前端错传把主窗口关掉。
+    const ALLOWED: &[&str] = &[crate::floating::NET_SPEED_LABEL];
+    if !ALLOWED.contains(&label.as_str()) {
+        return Err(format!("label not allowed: {label}"));
+    }
+    if let Some(w) = tauri::Manager::get_webview_window(&app, &label) {
+        w.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

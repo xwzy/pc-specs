@@ -201,6 +201,12 @@ export interface DevEnvInfo {
   env_keys: string[];
 }
 
+export interface InterfaceTick {
+  name: string;
+  rx_bps: number;
+  tx_bps: number;
+}
+
 export interface MonitorTick {
   timestamp: number;
   cpu_overall: number;
@@ -213,4 +219,5 @@ export interface MonitorTick {
   disk_write_bps: number;
   gpu_utilizations: number[];
   temperatures: SensorReading[];
+  per_interface: InterfaceTick[];
 }

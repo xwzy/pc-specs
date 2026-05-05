@@ -20,7 +20,12 @@ export default function NetworkPage() {
     queryFn: getNetwork,
     refetchInterval: 5_000,
   });
-  const { ticks } = useMonitor(true);
+  const { ticks, latest } = useMonitor(true);
+  const liveByName = useMemo(() => {
+    const m = new Map<string, { rx: number; tx: number }>();
+    latest?.per_interface.forEach((p) => m.set(p.name, { rx: p.rx_bps, tx: p.tx_bps }));
+    return m;
+  }, [latest]);
   const publicIpEnabled = useSettings((s) => s.publicIpEnabled);
   const publicIp = useSettings((s) => s.publicIp);
   const setPublicIp = useSettings((s) => s.setPublicIp);
@@ -108,56 +113,70 @@ export default function NetworkPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {net.interfaces.map((n) => (
-            <Card
-              key={n.name}
-              title={
-                <span className="flex items-center gap-2">
-                  <span className="font-mono">{n.name}</span>
-                  <Badge
-                    tone={
-                      n.kind === "wifi"
-                        ? "accent"
-                        : n.kind === "ethernet"
-                          ? "success"
-                          : "default"
-                    }
-                  >
-                    {n.kind.toUpperCase()}
-                  </Badge>
-                  {n.is_loopback && <Badge>LOOPBACK</Badge>}
-                </span>
-              }
-            >
-              <KeyValueTable
-                rows={[
-                  { key: t("spec_mac"), value: nullable(n.mac) },
-                  { key: "ipv4", value: n.ipv4.length === 0 ? "—" : n.ipv4.join(", ") },
-                  {
-                    key: "ipv6",
-                    value:
-                      n.ipv6.length === 0
-                        ? "—"
-                        : n.ipv6.slice(0, 2).join(", ") +
-                          (n.ipv6.length > 2 ? ` (+${n.ipv6.length - 2})` : ""),
-                  },
-                  {
-                    key: t("spec_link_speed"),
-                    value: n.link_speed_mbps ? `${n.link_speed_mbps} Mbps` : "—",
-                  },
-                  {
-                    key: t("spec_status"),
-                    value: n.is_up ? t("spec_status_up") : t("spec_status_down"),
-                  },
-                  { key: t("net_rx_total"), value: fmt.bytes(n.rx_total_bytes) },
-                  { key: t("net_tx_total"), value: fmt.bytes(n.tx_total_bytes) },
-                ]}
-              />
-              <div className="mt-2 text-text-tertiary text-[11px] font-mono">
-                {t("net_per_iface_hint")}
-              </div>
-            </Card>
-          ))}
+          {net.interfaces.map((n) => {
+            const live = liveByName.get(n.name);
+            return (
+              <Card
+                key={n.name}
+                title={
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono">{n.name}</span>
+                    <Badge
+                      tone={
+                        n.kind === "wifi"
+                          ? "accent"
+                          : n.kind === "ethernet"
+                            ? "success"
+                            : "default"
+                      }
+                    >
+                      {n.kind.toUpperCase()}
+                    </Badge>
+                    {n.is_loopback && <Badge>LOOPBACK</Badge>}
+                  </span>
+                }
+                action={
+                  live ? (
+                    <span className="text-xs font-mono tabular-nums text-text-secondary flex items-center gap-3">
+                      <span>↓ {fmt.netSpeed(live.rx)}</span>
+                      <span>↑ {fmt.netSpeed(live.tx)}</span>
+                    </span>
+                  ) : null
+                }
+              >
+                <KeyValueTable
+                  rows={[
+                    { key: t("spec_mac"), value: nullable(n.mac) },
+                    { key: "ipv4", value: n.ipv4.length === 0 ? "—" : n.ipv4.join(", ") },
+                    {
+                      key: "ipv6",
+                      value:
+                        n.ipv6.length === 0
+                          ? "—"
+                          : n.ipv6.slice(0, 2).join(", ") +
+                            (n.ipv6.length > 2 ? ` (+${n.ipv6.length - 2})` : ""),
+                    },
+                    {
+                      key: t("spec_link_speed"),
+                      value: n.link_speed_mbps ? `${n.link_speed_mbps} Mbps` : "—",
+                    },
+                    {
+                      key: t("spec_status"),
+                      value: n.is_up ? t("spec_status_up") : t("spec_status_down"),
+                    },
+                    { key: t("net_rx_total"), value: fmt.bytes(n.rx_total_bytes) },
+                    { key: t("net_tx_total"), value: fmt.bytes(n.tx_total_bytes) },
+                    {
+                      key: t("net_iface_live"),
+                      value: live
+                        ? `↓ ${fmt.netSpeed(live.rx)}  ↑ ${fmt.netSpeed(live.tx)}`
+                        : "—",
+                    },
+                  ]}
+                />
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

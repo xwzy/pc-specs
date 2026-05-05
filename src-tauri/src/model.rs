@@ -234,4 +234,14 @@ pub struct MonitorTick {
     pub disk_write_bps: u64,
     pub gpu_utilizations: Vec<f32>,
     pub temperatures: Vec<SensorReading>,
+    /// 每接口的实时 BPS。只包含本次 tick 看到的非空网卡（含 loopback），
+    /// 前端按 name 关联到 NetworkInterface 卡片即可。size 通常 < 16 项。
+    pub per_interface: Vec<InterfaceTick>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceTick {
+    pub name: String,
+    pub rx_bps: u64,
+    pub tx_bps: u64,
 }
