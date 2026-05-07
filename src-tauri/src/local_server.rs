@@ -51,7 +51,12 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 
 pub fn spawn(app: AppHandle, shared: Arc<SharedSys>) {
     let state = Arc::new(ServerState::new(app, shared));
-    tokio::spawn(async move {
+    // 使用 tauri::async_runtime::spawn 而非 tokio::spawn ——
+    // Tauri 的 `setup()` 回调在主线程同步执行，调用点本身并未"进入" Tokio runtime，
+    // 直接 tokio::spawn 会触发 "no reactor running" panic。
+    // tauri::async_runtime 内部托管一个常驻的多线程 tokio runtime，
+    // axum / tokio::net 在该 runtime 上正常工作。
+    tauri::async_runtime::spawn(async move {
         if let Err(e) = run_server(state).await {
             tracing::warn!("local http server stopped: {e}");
         }
