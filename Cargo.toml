@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/app"]
+default-members = ["crates/app"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+authors = ["pc-specs contributors"]
+description = "Cross-platform PC configuration viewer"
+
+# GPUI 与组件库在 Debug 构建下几乎不做优化，`cargo run` 会明显卡顿。
+# 只给框架依赖开优化，应用自身代码仍保持 Debug（编译快、可调试）。
+# proc-macro crate 不放进来：它们只在编译期运行，优化只会拖慢编译。
+[profile.dev.package]
+gpui-pre = { opt-level = 3 }
+gpui-component = { opt-level = 3 }
+gpui-kit = { opt-level = 3 }
+gpui-kit-assets = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+sysinfo = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 8
+strip = true

@@ -1,13 +1,12 @@
 name: Build
 
-# 推到 main 时构建 5 个平台 × 架构组合的 Tauri 安装包：
-#   - macOS  arm64       → .dmg
-#   - Linux  arm64/amd64 → .AppImage（绿色单文件，方便直接 chmod +x 跑）
-#   - Windows arm64/amd64 → -setup.exe (NSIS) + .msi
+# 推到 main 时在 5 个原生 runner 上构建 GPUI 应用并打包：
+#   - macOS  arm64        → .dmg
+#   - Linux  amd64/arm64  → .tar.gz + .deb
+#   - Windows amd64/arm64 → .zip
 #
-# 每个矩阵分支跑在 GitHub 官方提供的对应原生 runner 上，避免 cross-compile
-# 时 webkit2gtk / WindowsSDK 的麻烦。所有产物都会以 artifact 形式上传到本次 run；
-# 当推 `v*` tag 时，额外自动建一个 GitHub Release，把所有平台安装包附带进去。
+# 每个平台都在对应的原生 runner 上构建，不做交叉编译。产物以 artifact 形式上传；
+# 推 `v*` tag 时，额外建一个 GitHub Release 并附带所有安装包。
 
 on:
   push:
@@ -34,133 +33,84 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # ---- macOS ----
           - label: macos-arm64
-            runner: macos-14            # Apple Silicon (M-series)
-            target: aarch64-apple-darwin
+            runner: macos-14            # Apple Silicon
             os: macos
-
-          # ---- Linux ----
           - label: linux-amd64
             runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
             os: linux
           - label: linux-arm64
-            runner: ubuntu-22.04-arm    # GitHub-hosted ARM runner (公开免费)
-            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm    # GitHub 托管的 ARM runner
             os: linux
-
-          # ---- Windows ----
           - label: windows-amd64
             runner: windows-latest
-            target: x86_64-pc-windows-msvc
             os: windows
           - label: windows-arm64
-            runner: windows-11-arm      # GitHub-hosted Windows-on-ARM runner
-            target: aarch64-pc-windows-msvc
+            runner: windows-11-arm      # GitHub 托管的 Windows-on-ARM runner
             os: windows
 
     env:
-      # 把矩阵字段提前展开成进程环境变量，避免在 run: 里直接做 ${{ ... }} 插值，
-      # 同时方便后续 step 复用。
       MATRIX_LABEL: ${{ matrix.platform.label }}
-      MATRIX_TARGET: ${{ matrix.platform.target }}
-      MATRIX_OS: ${{ matrix.platform.os }}
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # --- Tauri 2 在 Linux 需要 webkit2gtk-4.1 + 一系列 GTK / 桌面集成依赖 ---
+      # GPUI 在 Linux 上需要 fontconfig / Wayland / xkbcommon / XCB 的开发包；
+      # 运行时的 Vulkan 驱动由用户系统提供，编译不需要。
       - name: Install Linux deps
         if: matrix.platform.os == 'linux'
-        shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            patchelf \
-            file
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libfontconfig-dev libwayland-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          # 与 package.json packageManager 字段保持一致
-          version: 10.26.2
-          run_install: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+      # ring（HTTPS 依赖）在 Windows ARM64 上必须用 clang 编译 C 代码。
+      - name: Ensure clang on Windows ARM64
+        if: matrix.platform.label == 'windows-arm64'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) { choco install llvm -y --no-progress }
+          clang --version
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.target }}
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
-          # 同一仓库不同 target 的产物互不复用
-          key: ${{ matrix.platform.target }}
+          key: ${{ matrix.platform.label }}
 
-      - name: Install JS deps
-        run: pnpm install --frozen-lockfile
+      - name: Build release binary
+        run: cargo build --release --locked -p pc-specs
 
-      - name: Build Tauri bundle
-        shell: bash
-        env:
-          # 关闭 dev-only 签名（CI 不持有签名密钥；如需启用，在仓库 secrets 里
-          # 添加 TAURI_SIGNING_PRIVATE_KEY 和 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-          # 后再删除这两行 fallback）。
-          TAURI_SIGNING_PRIVATE_KEY: ""
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-        run: pnpm tauri build --target "$MATRIX_TARGET"
+      - name: Package (macOS / Linux)
+        if: matrix.platform.os != 'windows'
+        run: scripts/package.sh "$MATRIX_LABEL"
 
-      # 只收集"可直接分发"的安装包：
-      #   - macOS  → .dmg
-      #   - Linux  → .AppImage
-      #   - Windows → -setup.exe (NSIS) 与 .msi
-      # 收集时把文件名前缀加上矩阵 label，避免不同架构同名 (例如 windows-amd64 与
-      # windows-arm64 的 .msi) 在 release 阶段相互覆盖。
-      - name: Collect release artifacts
-        if: always()
-        shell: bash
+      - name: Package (Windows)
+        if: matrix.platform.os == 'windows'
+        shell: pwsh
         run: |
-          set -e
-          OUT="dist-${MATRIX_LABEL}"
-          mkdir -p "$OUT"
-          BUNDLE_DIR="src-tauri/target/${MATRIX_TARGET}/release/bundle"
-          if [ ! -d "$BUNDLE_DIR" ]; then
-            echo "no bundle dir at $BUNDLE_DIR"
-            exit 0
-          fi
-          while IFS= read -r -d '' src; do
-            base="$(basename "$src")"
-            ext="${base##*.}"
-            stem="${base%.*}"
-            dest="$OUT/${stem}-${MATRIX_LABEL}.${ext}"
-            cp "$src" "$dest"
-          done < <(find "$BUNDLE_DIR" \
-              \( -name '*.dmg' -o -name '*.AppImage' \
-                 -o -name '*.msi' -o -name '*-setup.exe' \) \
-              -type f -print0)
-          ls -la "$OUT" || true
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $stage = "dist/pc-specs-$version-$env:MATRIX_LABEL"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item target/release/pc-specs.exe $stage/
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/pc-specs-$version-$env:MATRIX_LABEL.zip" -Force
+          Remove-Item -Recurse -Force $stage
+          Get-ChildItem dist
 
       - name: Upload artifacts
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pc-specs-${{ matrix.platform.label }}
-          path: dist-${{ matrix.platform.label }}/*
-          if-no-files-found: warn
+          path: |
+            dist/*.dmg
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.zip
+          if-no-files-found: error
           retention-days: 14
 
   # 推 `v*` tag 时把所有平台的 artifact 汇总到一个 GitHub Release。
@@ -178,17 +128,10 @@ jobs:
           path: artifacts
 
       - name: Flatten artifacts
-        shell: bash
         run: |
-          set -e
           mkdir -p release-files
-          # download-artifact@v4 把每个 artifact 解压到 artifacts/<name>/，
-          # 这里把所有安装包平铺到一层，方便 action-gh-release 一次上传。
-          find artifacts -type f \
-            \( -name '*.dmg' -o -name '*.AppImage' \
-               -o -name '*.msi' -o -name '*-setup.exe' \) \
+          find artifacts -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.zip' \) \
             -exec cp {} release-files/ \;
-          echo "release files:"
           ls -la release-files
 
       - name: Publish release

@@ -52,7 +52,7 @@
     <tbody>
       <tr><td><code class="method">GET</code></td><td><code class="path">/healthz</code></td><td>Liveness check (also POST <code>/api/v1/health</code>)</td></tr>
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/info</code></td><td>Lightweight identity (host, OS, app version)</td></tr>
-      <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/metrics</code></td><td>Live CPU / memory / network BPS / disk BPS (800ms cache)</td></tr>
+      <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/metrics</code></td><td>Live CPU / memory / network / disk rates, GPU &amp; temperatures (800ms cache)</td></tr>
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/snapshot</code></td><td>Full system snapshot (3s cache). Body: <code>{ "include_sensitive": false }</code></td></tr>
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/host</code></td><td>Hostname / username / uptime</td></tr>
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/os</code></td><td>OS name / version / kernel</td></tr>
@@ -65,7 +65,7 @@
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/displays</code></td><td>Connected displays</td></tr>
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/sensors</code></td><td>Temperatures &amp; sensors</td></tr>
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/battery</code></td><td>Battery (laptop only)</td></tr>
-      <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/peripherals</code></td><td>USB / input devices</td></tr>
+      <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/peripherals</code></td><td>USB / Bluetooth / camera / audio devices</td></tr>
       <tr><td><code class="method">POST</code></td><td><code class="path">/api/v1/dev_env</code></td><td>Languages / package managers / editors / containers</td></tr>
     </tbody>
   </table>
@@ -81,8 +81,8 @@ curl -s -X POST http://&lt;host&gt;:16089/api/v1/snapshot \
   <p>
     By default sensitive fields (hostname, username, MACs, serial numbers, public IP) are
     redacted. Pass <code>{"include_sensitive": true}</code> to <code>/api/v1/snapshot</code>
-    to receive raw values. The service binds to <code>0.0.0.0:16089</code>; restrict access
-    via your firewall if exposing beyond a trusted LAN.
+    to receive raw values. By default the service binds to <code>0.0.0.0:16089</code>; it can be limited to
+    this machine in the app's Settings, or restricted via your firewall if exposing beyond a trusted LAN.
   </p>
 </main>
 </body>

@@ -1,9 +1,10 @@
 use crate::model::StorageInfo;
-use crate::state::SharedSys;
+use crate::util::which;
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
+use sysinfo::{DiskKind, Disks};
 
 const VIRTUAL_FS: &[&str] = &[
     "tmpfs",
@@ -53,80 +54,124 @@ const VIRTUAL_MOUNT_PREFIXES: &[&str] = &[
     "/System/Volumes/Recovery",
 ];
 
-pub fn collect(shared: &Arc<SharedSys>) -> Vec<StorageInfo> {
-    // 注意：每盘 IO 速率不在 collect() 中计算 —— Storage 页面的实时速率请由
-    // Monitor tick 的 disk_read_bps/disk_write_bps 聚合提供（monitor 拥有自己的 Disks 实例）。
-    let mut disks = shared.disks.lock();
-    disks.refresh();
+/// 磁盘容量 / 类型 / 健康。每盘的实时 IO 速率由 `monitor::Sampler` 提供。
+pub fn collect() -> Vec<StorageInfo> {
+    let Ok(disks) = Disks::new_with_refreshed_list() else {
+        return Vec::new();
+    };
+    let win_drives = windows_drive_kinds();
 
-    let win_drives = collect_windows_drive_kinds();
-
-    let mut interim: Vec<StorageInfo> = disks
+    let mut items: Vec<(StorageInfo, Option<u64>)> = disks
         .iter()
         .filter_map(|d| {
             let total = d.total_space();
             if total == 0 {
                 return None;
             }
-            let avail = d.available_space();
-            let used = total.saturating_sub(avail);
             let name_raw = d.name().to_string_lossy().to_string();
             let mount = d.mount_point().to_string_lossy().to_string();
             let fs = d.file_system().to_string_lossy().to_string();
-
             if is_virtual(&fs, &mount) {
                 return None;
             }
-
-            let is_removable = d.is_removable();
-            let mut kind = classify_kind(d.kind(), &name_raw, &mount, is_removable);
-            // Windows：sysinfo DiskKind 经常是 Unknown(0)，name 也常为空；
-            // 用 WMI 的 InterfaceType + MediaType 兜底分类。
-            if kind == "Unknown" {
-                if let Some(better) = match_windows_drive_kind(&win_drives, &name_raw, &mount) {
-                    kind = better;
-                }
+            let mut kind = classify_kind(d.kind(), &name_raw, d.is_removable());
+            if kind == "Unknown"
+                && let Some(k) = match_windows_drive_kind(&win_drives, &name_raw)
+            {
+                kind = k;
             }
-
-            Some(StorageInfo {
-                name: if name_raw.is_empty() {
-                    mount.clone()
-                } else {
-                    name_raw
+            let used = total.saturating_sub(d.available_space());
+            Some((
+                StorageInfo {
+                    name: if name_raw.is_empty() {
+                        mount.clone()
+                    } else {
+                        name_raw
+                    },
+                    mount_point: Some(mount),
+                    filesystem: Some(fs),
+                    kind,
+                    total_bytes: total,
+                    used_bytes: used,
+                    ..Default::default()
                 },
-                mount_point: Some(mount),
-                filesystem: Some(fs),
-                kind,
-                total_bytes: total,
-                used_bytes: used,
-                read_bytes_per_sec: 0,
-                write_bytes_per_sec: 0,
-                temperature_c: None,
-                smart_health: None,
-                serial: None,
-            })
+                d.id(),
+            ))
         })
         .collect();
 
-    dedup_same_device(&mut interim);
-    enrich_smart(&mut interim);
-    interim
+    dedup_same_device(&mut items);
+    let mut items: Vec<StorageInfo> = items.into_iter().map(|(s, _)| s).collect();
+    native_enrich(&mut items);
+    enrich_smart(&mut items);
+    items
 }
 
-/// Windows: 用 WMI 拿磁盘的 InterfaceType / MediaType。
-/// Linux/macOS 返回空 vec（不需要这种兜底）。
+/// sysinfo 的类型 + 设备名 + 是否可移动综合分类：NVMe / SSD / HDD / Removable / Unknown。
+fn classify_kind(base: DiskKind, name: &str, is_removable: bool) -> String {
+    if is_removable {
+        return "Removable".to_string();
+    }
+    if name.to_ascii_lowercase().contains("nvme") {
+        return "NVMe".to_string();
+    }
+    match base {
+        DiskKind::HDD => "HDD",
+        DiskKind::SSD => "SSD",
+        DiskKind::Unknown(_) => "Unknown",
+    }
+    .to_string()
+}
+
+pub(crate) fn is_virtual(fs: &str, mount: &str) -> bool {
+    let fs = fs.to_ascii_lowercase();
+    VIRTUAL_FS.contains(&fs.as_str()) || VIRTUAL_MOUNT_PREFIXES.iter().any(|p| mount.starts_with(p))
+}
+
+/// macOS APFS 同一容器的多个卷共用一个设备 id；Linux 的 bind mount 同名同大小。
+/// 它们是同一块物理存储：保留挂载点最短（更接近根）的一条，已用空间取最大
+/// （只读系统卷往往报告很小的 used）。
+fn dedup_same_device(items: &mut Vec<(StorageInfo, Option<u64>)>) {
+    let mut groups: HashMap<(String, u64, String, Option<u64>), Vec<usize>> = HashMap::new();
+    for (i, (it, id)) in items.iter().enumerate() {
+        let key = (
+            it.name.clone(),
+            it.total_bytes,
+            it.filesystem.clone().unwrap_or_default(),
+            *id,
+        );
+        groups.entry(key).or_default().push(i);
+    }
+    let mut remove: Vec<usize> = Vec::new();
+    for ids in groups.values().filter(|ids| ids.len() > 1) {
+        let mount_len = |i: usize| items[i].0.mount_point.as_deref().map_or(0, str::len);
+        let best = *ids.iter().min_by_key(|&&i| mount_len(i)).unwrap_or(&ids[0]);
+        let max_used = ids
+            .iter()
+            .map(|&i| items[i].0.used_bytes)
+            .max()
+            .unwrap_or(0);
+        items[best].0.used_bytes = max_used;
+        remove.extend(ids.iter().copied().filter(|&i| i != best));
+    }
+    remove.sort_unstable();
+    for i in remove.into_iter().rev() {
+        items.remove(i);
+    }
+}
+
+// ----------------------------------------------------------- Windows 磁盘类型
+
 #[derive(Clone, Debug)]
 struct WinDriveKind {
-    /// 物理盘标识，形如 `\\.\PHYSICALDRIVE0` 或型号名。
+    /// 物理盘标识：`\\.\PHYSICALDRIVE0` 或型号名。
     device_id: String,
-    /// "NVMe" / "SSD" / "HDD" / "Removable" / "Unknown"
     kind: String,
 }
 
 #[cfg(target_os = "windows")]
-fn collect_windows_drive_kinds() -> Vec<WinDriveKind> {
+fn windows_drive_kinds() -> Vec<WinDriveKind> {
     use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
 
     #[derive(Deserialize, Debug)]
     #[serde(rename_all = "PascalCase")]
@@ -137,8 +182,9 @@ fn collect_windows_drive_kinds() -> Vec<WinDriveKind> {
         media_type: Option<String>,
     }
 
-    let Ok(com) = COMLibrary::new() else { return Vec::new() };
-    let Ok(conn) = WMIConnection::new(com) else { return Vec::new() };
+    let Some(conn) = crate::platform::windows::wmi_cimv2() else {
+        return Vec::new();
+    };
     let rows: Vec<Drive> = conn
         .raw_query("SELECT DeviceID, Model, InterfaceType, MediaType FROM Win32_DiskDrive")
         .unwrap_or_default();
@@ -149,41 +195,36 @@ fn collect_windows_drive_kinds() -> Vec<WinDriveKind> {
             let iface = d.interface_type.unwrap_or_default().to_lowercase();
             let media = d.media_type.unwrap_or_default().to_lowercase();
             let kind = if media.contains("removable") {
-                "Removable".to_string()
+                "Removable"
             } else if iface.contains("nvme") || media.contains("nvme") {
-                "NVMe".to_string()
+                "NVMe"
             } else if media.contains("ssd") || media.contains("solid state") {
-                "SSD".to_string()
+                "SSD"
             } else if media.contains("hdd") || media.contains("fixed hard") {
-                "HDD".to_string()
+                "HDD"
             } else if iface.contains("scsi") || iface.contains("sata") || iface.contains("ide") {
-                // MediaType 在 Win10/11 上经常是 "Fixed hard disk media"；
-                // 仅靠 InterfaceType 没法区分 SATA SSD vs HDD，留给 SMART 标记或保留 SSD 默认。
-                "SSD".to_string()
+                "SSD"
             } else {
                 return None;
             };
-            Some(WinDriveKind { device_id: id, kind })
+            Some(WinDriveKind {
+                device_id: id,
+                kind: kind.to_string(),
+            })
         })
         .collect()
 }
 
 #[cfg(not(target_os = "windows"))]
-fn collect_windows_drive_kinds() -> Vec<WinDriveKind> {
+fn windows_drive_kinds() -> Vec<WinDriveKind> {
     Vec::new()
 }
 
-fn match_windows_drive_kind(
-    drives: &[WinDriveKind],
-    name: &str,
-    _mount: &str,
-) -> Option<String> {
+fn match_windows_drive_kind(drives: &[WinDriveKind], name: &str) -> Option<String> {
     if drives.is_empty() {
         return None;
     }
     let n = name.to_lowercase();
-    // sysinfo 在 Windows 上 disk.name() 是磁盘卷标 "Local Disk" 或型号
-    // ("Samsung SSD 990 PRO 2TB")，直接匹配 model 子串。
     for d in drives {
         let id = d.device_id.to_lowercase();
         if id.is_empty() || n.is_empty() {
@@ -193,60 +234,59 @@ fn match_windows_drive_kind(
             return Some(d.kind.clone());
         }
     }
-    // 找不到精确匹配但只有一个物理盘时直接采用。
-    if drives.len() == 1 {
-        return Some(drives[0].kind.clone());
-    }
-    None
+    // 找不到精确匹配但只有一块物理盘时直接采用。
+    (drives.len() == 1).then(|| drives[0].kind.clone())
 }
 
-/// 根据 sysinfo 的 DiskKind + 设备名 + 挂载点 + 是否可移动综合分类。
-/// model 上 kind 字段允许 "SSD" / "HDD" / "NVMe" / "Removable" / "Unknown"。
-fn classify_kind(
-    base: sysinfo::DiskKind,
-    name: &str,
-    mount: &str,
-    is_removable: bool,
-) -> String {
-    if is_removable {
-        return "Removable".to_string();
-    }
-    let n = name.to_lowercase();
-    let m = mount.to_lowercase();
-    // NVMe 设备名通常含 "nvme"（Linux: /dev/nvme0n1）；macOS/Windows 在 sysinfo 拿不到
-    // 设备路径，但 name 字段里可能含品牌字串（"Samsung 990 PRO" 之类）；
-    // mount /Volumes/...（macOS 内置都是 NVMe）也可作为线索（保守起见仅看 nvme 关键字）。
-    if n.contains("nvme") || m.contains("nvme") {
-        return "NVMe".to_string();
-    }
-    match base {
-        sysinfo::DiskKind::HDD => "HDD".to_string(),
-        sysinfo::DiskKind::SSD => "SSD".to_string(),
-        sysinfo::DiskKind::Unknown(_) => "Unknown".to_string(),
-    }
-}
+// --------------------------------------------------------- macOS: diskutil
 
-fn enrich_smart(items: &mut [StorageInfo]) {
-    let smart = collect_smart_info();
-    if smart.is_empty() {
-        return;
-    }
-    for item in items.iter_mut() {
-        let mount = item.mount_point.clone().unwrap_or_default();
-        let key = device_basename(&item.name, &mount);
-        if let Some(s) = smart.iter().find(|s| s.matches(&item.name, &key, &mount)) {
-            if item.smart_health.is_none() {
-                item.smart_health = s.health.clone();
-            }
-            if item.serial.is_none() {
-                item.serial = s.serial.clone();
-            }
-            if item.temperature_c.is_none() {
-                item.temperature_c = s.temperature_c;
-            }
+/// macOS：`diskutil info` 给出总线协议（Apple Fabric / PCI-Express / USB / SATA）和
+/// 系统自带的 SMART 状态，不依赖 smartctl。
+#[cfg(target_os = "macos")]
+fn native_enrich(items: &mut [StorageInfo]) {
+    let handles: Vec<_> = items
+        .iter()
+        .map(|it| it.mount_point.clone().unwrap_or_default())
+        .map(|mount| {
+            std::thread::spawn(move || {
+                crate::util::run_stdout_timeout(
+                    "/usr/sbin/diskutil",
+                    &["info", &mount],
+                    Duration::from_secs(6),
+                )
+            })
+        })
+        .collect();
+    for (it, h) in items.iter_mut().zip(handles) {
+        let Some(text) = h.join().ok().flatten() else {
+            continue;
+        };
+        let field = |key: &str| {
+            text.lines().find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                (k.trim() == key).then(|| v.trim().to_string())
+            })
+        };
+        let protocol = field("Protocol").unwrap_or_default().to_ascii_lowercase();
+        if protocol.contains("fabric") || protocol.contains("nvme") || protocol.contains("pci") {
+            it.kind = "NVMe".to_string();
+        } else if it.kind == "Unknown" && protocol.contains("usb") {
+            it.kind = "Removable".to_string();
+        }
+        if it.smart_health.is_none() {
+            it.smart_health = field("SMART Status").and_then(|s| match s.as_str() {
+                "Verified" => Some("OK".to_string()),
+                "Failing" => Some("Failing".to_string()),
+                _ => None,
+            });
         }
     }
 }
+
+#[cfg(not(target_os = "macos"))]
+fn native_enrich(_items: &mut [StorageInfo]) {}
+
+// ------------------------------------------------------------------ SMART
 
 #[derive(Default, Clone)]
 struct SmartRow {
@@ -274,41 +314,63 @@ impl SmartRow {
     }
 }
 
-fn collect_smart_info() -> Vec<SmartRow> {
-    // SMART 状态变化非常缓慢（健康/序列号几乎不变，温度几十秒粒度足够），
-    // 而 smartctl 单次调用 200~600ms。前端 5s refetch 会让 Storage 页很慢，
-    // 这里做 30s TTL 进程内缓存。
-    type SmartCache = StdMutex<Option<(Instant, Vec<SmartRow>)>>;
-    static CACHE: once_cell::sync::Lazy<SmartCache> =
-        once_cell::sync::Lazy::new(|| StdMutex::new(None));
-    const TTL: Duration = Duration::from_secs(30);
-
-    {
-        let guard = CACHE.lock().unwrap();
-        if let Some((t, rows)) = guard.as_ref() {
-            if t.elapsed() < TTL {
-                return rows.clone();
+fn enrich_smart(items: &mut [StorageInfo]) {
+    let smart = collect_smart_info();
+    if smart.is_empty() {
+        return;
+    }
+    for item in items.iter_mut() {
+        let mount = item.mount_point.clone().unwrap_or_default();
+        let key = device_basename(&item.name, &mount);
+        if let Some(s) = smart.iter().find(|s| s.matches(&item.name, &key, &mount)) {
+            if item.smart_health.is_none() {
+                item.smart_health = s.health.clone();
+            }
+            if item.serial.is_none() {
+                item.serial = s.serial.clone();
+            }
+            if item.temperature_c.is_none() {
+                item.temperature_c = s.temperature_c;
             }
         }
     }
+}
 
+fn device_basename(name: &str, mount: &str) -> String {
+    if name.is_empty() {
+        return mount.to_string();
+    }
+    std::path::Path::new(name)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string())
+}
+
+/// SMART 状态变化很慢，而 `smartctl` 单次调用 200~600ms，所以做 30 秒进程内缓存。
+fn collect_smart_info() -> Vec<SmartRow> {
+    type Cache = Mutex<Option<(Instant, Vec<SmartRow>)>>;
+    static CACHE: LazyLock<Cache> = LazyLock::new(|| Mutex::new(None));
+    const TTL: Duration = Duration::from_secs(30);
+
+    let mut guard = CACHE.lock();
+    if let Some((t, rows)) = guard.as_ref()
+        && t.elapsed() < TTL
+    {
+        return rows.clone();
+    }
     let mut rows = smartctl_scan();
-    rows.extend(platform_smart_fallback());
-
-    let mut guard = CACHE.lock().unwrap();
+    rows.extend(windows_smart_fallback());
     *guard = Some((Instant::now(), rows.clone()));
     rows
 }
 
 #[cfg(target_os = "windows")]
-fn platform_smart_fallback() -> Vec<SmartRow> {
+fn windows_smart_fallback() -> Vec<SmartRow> {
     use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
 
     #[derive(Deserialize, Debug)]
     #[serde(rename_all = "PascalCase")]
     struct FailurePredict {
-        instance_name: Option<String>,
         predict_failure: Option<bool>,
     }
     #[derive(Deserialize, Debug)]
@@ -319,199 +381,134 @@ fn platform_smart_fallback() -> Vec<SmartRow> {
         model: Option<String>,
     }
 
-    let Ok(com) = COMLibrary::new() else { return Vec::new() };
-    let Ok(wmi_root) = WMIConnection::new(com) else { return Vec::new() };
-
-    let drives: Vec<DiskDrive> = wmi_root
+    let Some(conn) = crate::platform::windows::wmi_cimv2() else {
+        return Vec::new();
+    };
+    let drives: Vec<DiskDrive> = conn
         .raw_query("SELECT DeviceID, SerialNumber, Model FROM Win32_DiskDrive")
         .unwrap_or_default();
+    let predicts: Vec<FailurePredict> = crate::platform::windows::wmi_root_wmi()
+        .and_then(|c| {
+            c.raw_query("SELECT PredictFailure FROM MSStorageDriver_FailurePredictStatus")
+                .ok()
+        })
+        .unwrap_or_default();
 
-    // FailurePredictStatus 在 ROOT\WMI 命名空间。COM 已经被首次 COMLibrary::new() 初始化过，
-    // 这里使用 assume_initialized() 复用线程内已有的 COM 状态再开第二个连接。
-    // SAFETY: 同一线程内上面 `COMLibrary::new()` 已成功初始化 COM；wmi::COMLibrary 不会在 drop 时
-    // 反初始化 COM，所以这里复用线程内 COM 状态是安全的。
-    let com2 = unsafe { COMLibrary::assume_initialized() };
-    let predicts: Vec<FailurePredict> = if let Ok(conn) = WMIConnection::with_namespace_path("ROOT\\WMI", com2) {
-        conn.raw_query(
-            "SELECT InstanceName, PredictFailure FROM MSStorageDriver_FailurePredictStatus",
-        )
-        .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    let mut out = Vec::new();
-    // PredictFailure 的 InstanceName 形如 "SCSI\\DISK&VEN_..."；不能与 DeviceID 直接字符串匹配。
-    // 多盘机器若按 find_map 取第一条会让所有盘共用同一份 health（误判）。
-    // 这里按"两表行数相等才按下标对应"的保守策略：
-    //   - drives.len() == predicts.len(): 顺序对齐（WMI 在大部分场景下对齐）
-    //   - 行数不等: 不标记 health，只保留 device + serial
-    let aligned = drives.len() == predicts.len() && !drives.is_empty();
-    for (i, d) in drives.into_iter().enumerate() {
-        let model = d.model.unwrap_or_default();
-        let serial = d
-            .serial_number
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let health = if aligned {
-            predicts[i]
-                .predict_failure
-                .map(|f| if f { "Failing".to_string() } else { "OK".to_string() })
-        } else {
-            None
-        };
-        out.push(SmartRow {
-            device: d.device_id.unwrap_or(model),
-            health,
-            serial,
-            temperature_c: None,
-        });
-    }
-    out
+    // FailurePredictStatus 的 InstanceName 与 DeviceID 无法直接对应；
+    // 仅在两张表行数相同时按顺序对齐，否则不给 health，避免多盘互相张冠李戴。
+    let aligned = !drives.is_empty() && drives.len() == predicts.len();
+    drives
+        .into_iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let model = d.model.unwrap_or_default();
+            SmartRow {
+                device: d.device_id.unwrap_or(model),
+                health: aligned
+                    .then(|| predicts[i].predict_failure)
+                    .flatten()
+                    .map(|f| if f { "Failing" } else { "OK" }.to_string()),
+                serial: d
+                    .serial_number
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+                temperature_c: None,
+            }
+        })
+        .collect()
 }
 
 #[cfg(not(target_os = "windows"))]
-fn platform_smart_fallback() -> Vec<SmartRow> {
+fn windows_smart_fallback() -> Vec<SmartRow> {
     Vec::new()
 }
 
 fn smartctl_scan() -> Vec<SmartRow> {
-    use std::process::Command;
-    // 仅在 smartctl 可用时探测；不强制要求 root，没权限的字段会缺。
-    let scan = match Command::new("smartctl").args(["--scan", "-j"]).output() {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    // 仅在 smartctl 可用时探测；不强制 root，没权限的字段会缺失。
+    let path = crate::util::dev_path();
+    if which("smartctl", Some(path)).is_none() {
+        return Vec::new();
+    }
+    let run = |args: &[&str]| -> Option<serde_json::Value> {
+        let o = crate::util::run_with("smartctl", args, Duration::from_secs(6), Some(path))?;
+        serde_json::from_str(&o.stdout).ok()
     };
-    let json: serde_json::Value = match serde_json::from_slice(&scan.stdout) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
+    let Some(scan) = run(&["--scan", "-j"]) else {
+        return Vec::new();
     };
-    let devs = match json.get("devices").and_then(|d| d.as_array()) {
-        Some(d) => d,
-        None => return Vec::new(),
+    let Some(devs) = scan.get("devices").and_then(|d| d.as_array()) else {
+        return Vec::new();
     };
     let mut out = Vec::new();
     for dev in devs.iter().take(16) {
-        let name = match dev.get("name").and_then(|n| n.as_str()) {
-            Some(s) => s.to_string(),
-            None => continue,
+        let Some(name) = dev.get("name").and_then(|n| n.as_str()) else {
+            continue;
         };
-        let info_out = match Command::new("smartctl")
-            .args(["-i", "-H", "-A", "-j", &name])
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => continue,
+        let Some(info) = run(&["-i", "-H", "-A", "-j", name]) else {
+            continue;
         };
-        let info: serde_json::Value = match serde_json::from_slice(&info_out.stdout) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let health = info
-            .get("smart_status")
-            .and_then(|s| s.get("passed"))
-            .and_then(|p| p.as_bool())
-            .map(|p| if p { "OK".to_string() } else { "Failing".to_string() });
-        let serial = info
-            .get("serial_number")
-            .and_then(|s| s.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let temperature_c = info
-            .get("temperature")
-            .and_then(|t| t.get("current"))
-            .and_then(|t| t.as_f64())
-            .map(|n| n as f32)
-            .filter(|n| *n > 0.0 && *n < 200.0);
         out.push(SmartRow {
-            device: name,
-            health,
-            serial,
-            temperature_c,
+            device: name.to_string(),
+            health: info
+                .get("smart_status")
+                .and_then(|s| s.get("passed"))
+                .and_then(|p| p.as_bool())
+                .map(|p| if p { "OK" } else { "Failing" }.to_string()),
+            serial: info
+                .get("serial_number")
+                .and_then(|s| s.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            temperature_c: info
+                .get("temperature")
+                .and_then(|t| t.get("current"))
+                .and_then(|t| t.as_f64())
+                .map(|n| n as f32)
+                .filter(|n| *n > 0.0 && *n < 200.0),
         });
     }
     out
 }
 
-/// macOS APFS 单容器多卷会被 sysinfo 列出多条相同 total_bytes 的项；
-/// Linux 多挂载点（如 bind mount）也会重复。
-/// 同 (name, total_bytes, fs) 视为同物理设备，保留挂载点最短（更接近根）的那条，
-/// 并把"已用空间"取最大（系统卷往往报 0 used）。
-fn dedup_same_device(items: &mut Vec<StorageInfo>) {
-    let mut groups: HashMap<(String, u64, String), Vec<usize>> = HashMap::new();
-    for (i, it) in items.iter().enumerate() {
-        let fs = it.filesystem.clone().unwrap_or_default();
-        let key = (it.name.clone(), it.total_bytes, fs);
-        groups.entry(key).or_default().push(i);
-    }
-    let mut to_remove: Vec<usize> = Vec::new();
-    for (_key, ids) in groups.iter() {
-        if ids.len() <= 1 {
-            continue;
-        }
-        let mut best = ids[0];
-        let mut best_score: (usize, u64) = score(items, best);
-        for &i in &ids[1..] {
-            let s = score(items, i);
-            if s < best_score {
-                best_score = s;
-                best = i;
-            }
-        }
-        let max_used = ids.iter().map(|&i| items[i].used_bytes).max().unwrap_or(0);
-        let max_r = ids.iter().map(|&i| items[i].read_bytes_per_sec).max().unwrap_or(0);
-        let max_w = ids.iter().map(|&i| items[i].write_bytes_per_sec).max().unwrap_or(0);
-        items[best].used_bytes = max_used;
-        items[best].read_bytes_per_sec = max_r;
-        items[best].write_bytes_per_sec = max_w;
-        for &i in ids {
-            if i != best {
-                to_remove.push(i);
-            }
-        }
-    }
-    to_remove.sort_unstable();
-    to_remove.dedup();
-    for i in to_remove.into_iter().rev() {
-        items.remove(i);
-    }
-}
-
-fn score(items: &[StorageInfo], i: usize) -> (usize, u64) {
-    // 越小越优：挂载点越短越好；mount==/ 最优（长度 1）。
-    let mount = items[i].mount_point.clone().unwrap_or_default();
-    (mount.len(), 0)
-}
-
-fn is_virtual(fs: &str, mount: &str) -> bool {
-    let fs_lower = fs.to_lowercase();
-    if VIRTUAL_FS.iter().any(|v| fs_lower == *v) {
-        return true;
-    }
-    if VIRTUAL_MOUNT_PREFIXES
-        .iter()
-        .any(|p| mount.starts_with(p))
+/// 磁盘所属的物理设备键：同一块盘上的多个分区 / 卷共享它。
+///
+/// sysinfo 的 IO 计数在 Linux 上按整盘读取、在 macOS 上按容器读取，
+/// 所以汇总速率时必须先按此键去重，否则同一块盘会被重复计数。
+pub(crate) fn physical_key(name: &str, id: Option<u64>, mount: &str) -> String {
+    #[cfg(target_os = "macos")]
     {
-        return true;
+        let _ = mount;
+        id.map_or_else(|| name.to_string(), |i| format!("id:{i}"))
     }
-    false
-}
-
-/// 已废弃：聚合磁盘 IO 现在由 monitor.rs 自己负责（使用独立 disks 实例）。
-/// 保留 stub 以便不被外部破坏；monitor 不会调用这个。
-#[allow(dead_code)]
-pub fn collect_aggregate_io(_shared: &Arc<SharedSys>) -> (u64, u64) {
-    (0, 0)
-}
-
-fn device_basename(name: &str, mount: &str) -> String {
-    if !name.is_empty() {
-        std::path::Path::new(name)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| name.to_string())
-    } else {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (id, mount);
+        let base = name.trim_start_matches("/dev/");
+        // nvme0n1p2 / mmcblk0p1 → 去掉 `p<数字>`；sda3 → 去掉尾部数字。
+        if base.starts_with("nvme") || base.starts_with("mmcblk") || base.starts_with("loop") {
+            if let Some((disk, part)) = base.rsplit_once('p')
+                && !part.is_empty()
+                && part.bytes().all(|b| b.is_ascii_digit())
+            {
+                return disk.to_string();
+            }
+            return base.to_string();
+        }
+        if base.starts_with("sd")
+            || base.starts_with("vd")
+            || base.starts_with("hd")
+            || base.starts_with("xvd")
+        {
+            return base
+                .trim_end_matches(|c: char| c.is_ascii_digit())
+                .to_string();
+        }
+        base.to_string()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Windows 每个卷的计数相互独立，盘符就是最稳定的键（卷标可能重名）。
+        let _ = (name, id);
         mount.to_string()
     }
 }
-

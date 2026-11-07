@@ -1,125 +1,62 @@
-// 各 cfg 分发函数使用 explicit return 避免空块错误，clippy 的 needless_return 在此场景误报。
-#![allow(clippy::needless_return)]
-
-pub mod common;
-
-#[cfg(target_os = "windows")]
-pub mod windows;
-
-#[cfg(target_os = "macos")]
-pub mod macos;
+//! 各操作系统独有的采集实现。上层 `modules` 只依赖这里的统一入口。
 
 #[cfg(target_os = "linux")]
-pub mod linux;
+mod linux;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_net;
+#[cfg(target_os = "windows")]
+pub(crate) mod windows;
+
+#[cfg(target_os = "linux")]
+use linux as imp;
+#[cfg(target_os = "macos")]
+use macos as imp;
+#[cfg(target_os = "windows")]
+use windows as imp;
 
 use crate::model::{MemoryModule, MotherboardInfo, SensorReading};
 
+/// sysinfo 给不了、需要读平台接口补充的 CPU 信息。全部可选，缺失由上层兜底。
+#[derive(Debug, Default, Clone)]
+pub struct CpuDetails {
+    pub brand: Option<String>,
+    pub features: Vec<String>,
+    /// 每核 L1 数据缓存、L2、L3（字节）。
+    pub l1: Option<u64>,
+    pub l2: Option<u64>,
+    pub l3: Option<u64>,
+    pub sockets: Option<u32>,
+    pub p_cores: Option<u32>,
+    pub e_cores: Option<u32>,
+    pub numa_nodes: Option<u32>,
+    /// 额定基础频率 / 最高睿频（Hz）。
+    pub base_hz: Option<u64>,
+    pub max_hz: Option<u64>,
+    /// sysinfo 报告的频率是否为"当前实时频率"。Apple Silicon 上它是固定的最高频率。
+    pub live_frequency: bool,
+    /// 硬件虚拟化是否可用 / 已在固件中启用。
+    pub virtualization: Option<bool>,
+}
+
+pub fn cpu_details() -> CpuDetails {
+    imp::cpu_details()
+}
+
 pub fn motherboard() -> Option<MotherboardInfo> {
-    #[cfg(target_os = "windows")]
-    {
-        return windows::motherboard().or_else(common::motherboard);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return macos::motherboard().or_else(common::motherboard);
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return linux::motherboard().or_else(common::motherboard);
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        common::motherboard()
-    }
+    imp::motherboard()
 }
 
 pub fn memory_modules() -> Vec<MemoryModule> {
-    #[cfg(target_os = "windows")]
-    {
-        return windows::memory_modules();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return macos::memory_modules();
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return linux::memory_modules();
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        Vec::new()
-    }
+    imp::memory_modules()
 }
 
+/// sysinfo `Components` 之外的传感器（hwmon 的风扇 / 电压 / 功率、Windows 热区等）。
 pub fn extra_sensors() -> Vec<SensorReading> {
-    #[cfg(target_os = "linux")]
-    {
-        return linux::sensors();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return macos::sensors();
-    }
-    #[cfg(target_os = "windows")]
-    {
-        return windows::sensors();
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        Vec::new()
-    }
-}
-
-pub fn cpu_sockets() -> Option<u32> {
-    #[cfg(target_os = "linux")]
-    {
-        return linux::cpu_sockets();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return macos::cpu_sockets();
-    }
-    #[cfg(target_os = "windows")]
-    {
-        return windows::cpu_sockets();
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        None
-    }
-}
-
-pub fn cpu_brand_fallback() -> Option<String> {
-    #[cfg(target_os = "macos")]
-    {
-        return macos::cpu_brand();
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return linux::cpu_brand();
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
-    }
+    imp::extra_sensors()
 }
 
 pub fn desktop_env() -> Option<String> {
-    #[cfg(target_os = "linux")]
-    {
-        return std::env::var("XDG_CURRENT_DESKTOP").ok();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return Some("Aqua".to_string());
-    }
-    #[cfg(target_os = "windows")]
-    {
-        return Some("Explorer".to_string());
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        None
-    }
+    imp::desktop_env()
 }

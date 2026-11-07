@@ -2,48 +2,34 @@ use crate::model::OsInfo;
 use sysinfo::System;
 
 pub fn collect() -> OsInfo {
-    let info = os_info::get();
-    let family = std::env::consts::OS.to_string();
-    let arch = std::env::consts::ARCH.to_string();
-
-    let kernel = System::kernel_version().unwrap_or_else(|| "unknown".to_string());
-    let name = System::long_os_version().unwrap_or_else(|| info.os_type().to_string());
-    let version = System::os_version().unwrap_or_else(|| info.version().to_string());
-
-    let locale = sys_locale_or_default();
-    let shell = std::env::var("SHELL").ok().or_else(|| std::env::var("ComSpec").ok());
-    let desktop = crate::platform::desktop_env();
+    // os_info 在 Linux / macOS 上会拉起 lsb_release / sw_vers，仅在 sysinfo 取不到时才用。
+    let name = System::long_os_version()
+        .or_else(|_| System::name())
+        .unwrap_or_else(|_| os_info::get().os_type().to_string());
+    let version = System::os_version().unwrap_or_else(|_| os_info::get().version().to_string());
 
     OsInfo {
-        family,
+        family: std::env::consts::OS.to_string(),
         name,
         version,
-        kernel,
-        arch,
-        locale,
-        shell,
-        desktop,
+        kernel: System::kernel_version().unwrap_or_else(|_| "unknown".to_string()),
+        arch: std::env::consts::ARCH.to_string(),
+        locale: locale(),
+        shell: std::env::var("SHELL")
+            .ok()
+            .or_else(|| std::env::var("ComSpec").ok()),
+        desktop: crate::platform::desktop_env(),
     }
 }
 
-fn sys_locale_or_default() -> String {
-    if let Ok(v) = std::env::var("LC_ALL") {
-        if !v.is_empty() {
-            return v;
-        }
-    }
-    if let Ok(v) = std::env::var("LANG") {
-        if !v.is_empty() {
-            return v;
-        }
-    }
-    // whoami::langs() 在 Windows 通过 GetUserPreferredUILanguages 工作，
-    // 在 macOS 通过 NSLocale，在 Linux 仍读 LC_*。
-    // 注意 langs() 返回 Result<Iterator>，我们取首个 BCP-47 标签
-    if let Ok(mut it) = whoami::langs() {
-        if let Some(lang) = it.next() {
-            return lang.to_string();
-        }
-    }
-    "en-US".to_string()
+/// 系统界面语言。从 Dock / 开始菜单启动的 GUI 进程通常没有 LANG 环境变量，
+/// 所以优先询问操作系统（NSLocale / GetUserPreferredUILanguages），环境变量垫底。
+fn locale() -> String {
+    sys_locale::get_locale()
+        .or_else(|| {
+            ["LC_ALL", "LANG"]
+                .iter()
+                .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+        })
+        .unwrap_or_else(|| "en-US".to_string())
 }

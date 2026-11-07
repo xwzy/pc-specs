@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=PC Specs
+Name[zh_CN]=电脑配置
+Comment=PC configuration viewer and live monitor
+Comment[zh_CN]=查看电脑配置并实时监控
+Exec=pc-specs
+Icon=com.xwzy.pc-specs
+Terminal=false
+Categories=System;Monitor;
+Keywords=hardware;specs;monitor;cpu;gpu;
+StartupWMClass=com.xwzy.pc-specs

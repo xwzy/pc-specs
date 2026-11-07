@@ -1,5 +1,6 @@
 use crate::model::PeripheralInfo;
 
+/// 外设清单（USB / 蓝牙 / 摄像头 / 音频）。`kind` 取值：usb、bluetooth、camera、audio、printer。
 pub fn collect() -> Vec<PeripheralInfo> {
     let mut out = collect_platform();
     out.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.name.cmp(&b.name)));
@@ -13,54 +14,115 @@ pub fn collect() -> Vec<PeripheralInfo> {
 }
 
 #[cfg(target_os = "macos")]
+fn first_word(s: &str) -> String {
+    s.split_whitespace().next().unwrap_or(s).to_string()
+}
+
+// ------------------------------------------------------------------ macOS
+
+#[cfg(target_os = "macos")]
 fn collect_platform() -> Vec<PeripheralInfo> {
-    use std::process::Command;
-    let out = match Command::new("system_profiler")
-        .args(["-json", "SPUSBDataType"])
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
-    };
-    let v: serde_json::Value = match serde_json::from_slice(&out.stdout) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
+    use crate::platform::macos::system_profiler;
+
+    // 四个 system_profiler 互相独立，并行跑，总耗时取最慢的一个。
+    let (usb, cam, audio, bt) = std::thread::scope(|s| {
+        let usb = s.spawn(|| system_profiler("SPUSBDataType"));
+        let cam = s.spawn(|| system_profiler("SPCameraDataType"));
+        let audio = s.spawn(|| system_profiler("SPAudioDataType"));
+        let bt = s.spawn(|| system_profiler("SPBluetoothDataType"));
+        (
+            usb.join().ok().flatten(),
+            cam.join().ok().flatten(),
+            audio.join().ok().flatten(),
+            bt.join().ok().flatten(),
+        )
+    });
+
     let mut acc = Vec::new();
-    if let Some(arr) = v.get("SPUSBDataType").and_then(|x| x.as_array()) {
-        for node in arr {
-            walk_macos_usb(node, &mut acc);
+    let items = |root: &Option<serde_json::Value>, key: &str| -> Vec<serde_json::Value> {
+        root.as_ref()
+            .and_then(|r| r.get(key))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    for node in items(&usb, "SPUSBDataType") {
+        walk_usb(&node, &mut acc);
+    }
+    for c in items(&cam, "SPCameraDataType") {
+        if let Some(name) = c.get("_name").and_then(|v| v.as_str()) {
+            acc.push(PeripheralInfo {
+                kind: "camera".to_string(),
+                name: name.to_string(),
+                ..Default::default()
+            });
+        }
+    }
+    for group in items(&audio, "SPAudioDataType") {
+        for d in group
+            .get("_items")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let Some(name) = d.get("_name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let transport = d
+                .get("coreaudio_device_transport")
+                .and_then(|v| v.as_str())
+                .map(|t| t.trim_start_matches("coreaudio_device_type_").to_string());
+            acc.push(PeripheralInfo {
+                kind: "audio".to_string(),
+                name: name.to_string(),
+                vendor_id: d
+                    .get("coreaudio_device_manufacturer")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                bus: transport,
+                ..Default::default()
+            });
+        }
+    }
+    for ctrl in items(&bt, "SPBluetoothDataType") {
+        // 只列当前已连接的设备；历史配对记录属于隐私噪音。
+        for entry in ctrl
+            .get("device_connected")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let Some(map) = entry.as_object() else {
+                continue;
+            };
+            for (name, props) in map {
+                let text = |k: &str| props.get(k).and_then(|v| v.as_str());
+                acc.push(PeripheralInfo {
+                    kind: "bluetooth".to_string(),
+                    name: name.clone(),
+                    vendor_id: text("device_vendorID").map(first_word),
+                    product_id: text("device_productID").map(first_word),
+                    bus: text("device_minorType").map(str::to_string),
+                });
+            }
         }
     }
     acc
 }
 
 #[cfg(target_os = "macos")]
-fn walk_macos_usb(node: &serde_json::Value, acc: &mut Vec<PeripheralInfo>) {
-    let name = node
-        .get("_name")
-        .and_then(|s| s.as_str())
-        .unwrap_or("USB Device")
-        .to_string();
-    let vendor_id = node.get("vendor_id").and_then(|s| s.as_str()).map(|s| {
-        // macOS 返回类似 "0x05ac (Apple Inc.)"，截首段
-        s.split_whitespace().next().unwrap_or(s).to_string()
-    });
-    let product_id = node
-        .get("product_id")
-        .and_then(|s| s.as_str())
-        .map(|s| s.split_whitespace().next().unwrap_or(s).to_string());
-    let bus = node
-        .get("location_id")
-        .and_then(|s| s.as_str())
-        .map(|s| s.split_whitespace().next().unwrap_or(s).to_string());
-
-    let is_hub = name.to_lowercase().contains("hub")
-        || node
-            .get("_items")
-            .map(|x| x.is_array())
-            .unwrap_or(false);
-    let is_root = name.to_lowercase().contains("usb bus");
+fn walk_usb(node: &serde_json::Value, acc: &mut Vec<PeripheralInfo>) {
+    let text = |k: &str| node.get(k).and_then(|s| s.as_str());
+    let name = text("_name").unwrap_or("USB Device").to_string();
+    // "0x05ac (Apple Inc.)" → "0x05ac"
+    let vendor_id = text("vendor_id").map(first_word);
+    let product_id = text("product_id").map(first_word);
+    let bus = text("location_id").map(first_word);
+    let has_children = node.get("_items").is_some_and(|x| x.is_array());
+    let is_root =
+        name.to_lowercase().contains("usb bus") || name.to_lowercase().contains("host controller");
+    let is_hub = name.to_lowercase().contains("hub") || has_children;
 
     if !is_root && (vendor_id.is_some() || !is_hub) {
         acc.push(PeripheralInfo {
@@ -71,141 +133,231 @@ fn walk_macos_usb(node: &serde_json::Value, acc: &mut Vec<PeripheralInfo>) {
             bus,
         });
     }
-    if let Some(arr) = node.get("_items").and_then(|x| x.as_array()) {
-        for child in arr {
-            walk_macos_usb(child, acc);
-        }
+    for child in node
+        .get("_items")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+    {
+        walk_usb(child, acc);
     }
 }
 
+// ------------------------------------------------------------------ Linux
+
 #[cfg(target_os = "linux")]
 fn collect_platform() -> Vec<PeripheralInfo> {
+    let mut out = usb_devices();
+    out.extend(cameras());
+    out.extend(audio_cards());
+    out.extend(bluetooth_connected());
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn read_trim(path: &std::path::Path) -> Option<String> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let s = s.trim();
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn usb_devices() -> Vec<PeripheralInfo> {
     let mut out = Vec::new();
-    let entries = match std::fs::read_dir("/sys/bus/usb/devices") {
-        Ok(e) => e,
-        Err(_) => return out,
+    let Ok(entries) = std::fs::read_dir("/sys/bus/usb/devices") else {
+        return out;
     };
     for e in entries.flatten() {
         let dir = e.path();
-        let name = e.file_name().to_string_lossy().to_string();
-        // 跳过 usb 控制器（1-0:1.0 这种）
-        if name.contains(':') {
+        let bus = e.file_name().to_string_lossy().to_string();
+        // "1-0:1.0" 这类是接口而非设备。
+        if bus.contains(':') {
             continue;
         }
-        let vid = read_hex_id(&dir.join("idVendor"));
-        let pid = read_hex_id(&dir.join("idProduct"));
+        let vid = read_trim(&dir.join("idVendor")).map(|s| format!("0x{s}"));
+        let pid = read_trim(&dir.join("idProduct")).map(|s| format!("0x{s}"));
         if vid.is_none() && pid.is_none() {
             continue;
         }
-        // 过滤 Linux Foundation root hub（vendor 0x1d6b）—— 它们是内核虚拟设备，不是真实外设
+        // Linux Foundation 的 root hub 是内核虚拟设备，不是真实外设。
         if vid.as_deref() == Some("0x1d6b") {
             continue;
         }
-        let product = std::fs::read_to_string(dir.join("product"))
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let manuf = std::fs::read_to_string(dir.join("manufacturer"))
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let display_name = match (manuf.as_deref(), product.as_deref()) {
+        let product = read_trim(&dir.join("product"));
+        let manuf = read_trim(&dir.join("manufacturer"));
+        let name = match (manuf.as_deref(), product.as_deref()) {
+            (Some(m), Some(p)) if p.starts_with(m) => p.to_string(),
             (Some(m), Some(p)) => format!("{m} {p}"),
             (None, Some(p)) => p.to_string(),
             (Some(m), None) => m.to_string(),
-            _ => match (vid.as_deref(), pid.as_deref()) {
-                (Some(v), Some(p)) => format!("USB Device {v}:{p}"),
-                _ => format!("USB Device {name}"),
-            },
+            _ => format!(
+                "USB device {}:{}",
+                vid.as_deref().unwrap_or("?"),
+                pid.as_deref().unwrap_or("?")
+            ),
         };
         out.push(PeripheralInfo {
             kind: "usb".to_string(),
-            name: display_name,
+            name,
             vendor_id: vid,
             product_id: pid,
-            bus: Some(name),
+            bus: Some(bus),
         });
     }
     out
 }
 
+/// video4linux：同一个摄像头会暴露采集 + 元数据两个节点，只取 index 0。
 #[cfg(target_os = "linux")]
-fn read_hex_id(path: &std::path::Path) -> Option<String> {
-    let s = std::fs::read_to_string(path).ok()?.trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(format!("0x{s}"))
-    }
+fn cameras() -> Vec<PeripheralInfo> {
+    let Ok(entries) = std::fs::read_dir("/sys/class/video4linux") else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let dir = e.path();
+            if read_trim(&dir.join("index"))? != "0" {
+                return None;
+            }
+            Some(PeripheralInfo {
+                kind: "camera".to_string(),
+                name: read_trim(&dir.join("name"))?,
+                ..Default::default()
+            })
+        })
+        .collect()
 }
+
+/// ALSA 声卡：" 0 [PCH            ]: HDA-Intel - HDA Intel PCH"
+#[cfg(target_os = "linux")]
+fn audio_cards() -> Vec<PeripheralInfo> {
+    let Ok(text) = std::fs::read_to_string("/proc/asound/cards") else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|l| {
+            let (head, rest) = l.split_once("]:")?;
+            head.trim_start()
+                .chars()
+                .next()
+                .filter(char::is_ascii_digit)?;
+            let (driver, name) = rest.split_once(" - ")?;
+            Some(PeripheralInfo {
+                kind: "audio".to_string(),
+                name: name.trim().to_string(),
+                bus: Some(driver.trim().to_string()),
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+/// BlueZ：`bluetoothctl devices Connected` → "Device AA:BB:CC:DD:EE:FF Name"
+#[cfg(target_os = "linux")]
+fn bluetooth_connected() -> Vec<PeripheralInfo> {
+    let Some(text) = crate::util::run_stdout_timeout(
+        "bluetoothctl",
+        &["devices", "Connected"],
+        std::time::Duration::from_secs(2),
+    ) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|l| {
+            let rest = l.trim().strip_prefix("Device ")?;
+            let (_addr, name) = rest.split_once(' ')?;
+            Some(PeripheralInfo {
+                kind: "bluetooth".to_string(),
+                name: name.trim().to_string(),
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------- Windows
 
 #[cfg(target_os = "windows")]
 fn collect_platform() -> Vec<PeripheralInfo> {
     use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
 
     #[derive(Deserialize, Debug)]
     #[serde(rename_all = "PascalCase")]
     struct PnP {
         name: Option<String>,
+        #[serde(rename = "DeviceID")]
         device_id: Option<String>,
-        manufacturer: Option<String>,
+        #[serde(rename = "PNPClass")]
         pnp_class: Option<String>,
     }
 
-    let com = match COMLibrary::new() {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let Some(conn) = crate::platform::windows::wmi_cimv2() else {
+        return Vec::new();
     };
-    let conn = match WMIConnection::new(com) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    // 只取我们关心的几类，避免上百条键鼠 / 系统设备噪音
-    let interesting: &[&str] = &[
-        "USB", "Bluetooth", "Camera", "Image", "Media", "AudioEndpoint", "HIDClass", "Printer",
+    // 只取关心的几类，避免上百条系统设备噪音。
+    let classes = [
+        "USB",
+        "Bluetooth",
+        "Camera",
+        "Image",
+        "Media",
+        "AudioEndpoint",
+        "HIDClass",
+        "Printer",
     ];
-    let where_clause = interesting
+    let filter = classes
         .iter()
         .map(|k| format!("PNPClass='{k}'"))
         .collect::<Vec<_>>()
         .join(" OR ");
-    let q = format!(
-        "SELECT Name, DeviceID, Manufacturer, PNPClass FROM Win32_PnPEntity WHERE {where_clause}"
-    );
-    let rows: Vec<PnP> = conn.raw_query(&q).unwrap_or_default();
+    let rows: Vec<PnP> = conn
+        .raw_query(format!(
+            "SELECT Name, DeviceID, PNPClass FROM Win32_PnPEntity WHERE {filter}"
+        ))
+        .unwrap_or_default();
+
     rows.into_iter()
         .filter_map(|r| {
             let name = r.name?.trim().to_string();
-            if name.is_empty() {
+            let lower = name.to_lowercase();
+            // 控制器 / 集线器 / 通用 HID 子节点没有信息量。
+            const NOISE: [&str; 6] = [
+                "root hub",
+                "composite device",
+                "host controller",
+                "generic usb hub",
+                "usb input device",
+                "hid-compliant",
+            ];
+            if name.is_empty() || NOISE.iter().any(|n| lower.contains(n)) {
                 return None;
             }
-            let (vid, pid) = parse_usb_id(r.device_id.as_deref().unwrap_or(""));
+            let (vendor_id, product_id) = parse_usb_id(r.device_id.as_deref().unwrap_or(""));
             let kind = match r.pnp_class.as_deref().unwrap_or("USB") {
                 "Bluetooth" => "bluetooth",
                 "Camera" | "Image" => "camera",
                 "Media" | "AudioEndpoint" => "audio",
                 "Printer" => "printer",
                 _ => "usb",
-            }
-            .to_string();
+            };
             Some(PeripheralInfo {
-                kind,
+                kind: kind.to_string(),
                 name,
-                vendor_id: vid,
-                product_id: pid,
+                vendor_id,
+                product_id,
                 bus: None,
             })
         })
         .collect()
 }
 
+/// `USB\VID_046D&PID_C52B\...` → ("0x046d", "0xc52b")
 #[cfg(target_os = "windows")]
 fn parse_usb_id(device_id: &str) -> (Option<String>, Option<String>) {
-    // 形如: USB\VID_046D&PID_C52B\...
     let mut vid = None;
     let mut pid = None;
-    for tok in device_id.split(|c: char| c == '\\' || c == '&') {
+    for tok in device_id.split(['\\', '&']) {
         if let Some(rest) = tok.strip_prefix("VID_") {
             vid = Some(format!("0x{}", rest.to_lowercase()));
         } else if let Some(rest) = tok.strip_prefix("PID_") {

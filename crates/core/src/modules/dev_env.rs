@@ -1,5 +1,85 @@
 use crate::model::{DevEnvInfo, RuntimeInfo};
-use std::process::Command;
+use crate::util::{dev_path, run_with, which};
+use std::ffi::OsString;
+use std::time::Duration;
+
+type Spec = (&'static str, &'static [&'static str]);
+
+const LANGUAGES: &[Spec] = &[
+    ("node", &["--version"]),
+    ("python3", &["--version"]),
+    ("python", &["--version"]),
+    ("rustc", &["--version"]),
+    ("go", &["version"]),
+    ("java", &["-version"]),
+    ("dotnet", &["--version"]),
+    ("ruby", &["--version"]),
+    ("php", &["--version"]),
+    ("swift", &["--version"]),
+    ("deno", &["--version"]),
+    ("bun", &["--version"]),
+    ("gcc", &["--version"]),
+    ("clang", &["--version"]),
+];
+const PACKAGE_MANAGERS: &[Spec] = &[
+    ("npm", &["--version"]),
+    ("pnpm", &["--version"]),
+    ("yarn", &["--version"]),
+    ("pip", &["--version"]),
+    ("pip3", &["--version"]),
+    ("uv", &["--version"]),
+    ("cargo", &["--version"]),
+    ("gem", &["--version"]),
+    ("brew", &["--version"]),
+    ("apt", &["--version"]),
+    ("dnf", &["--version"]),
+    ("pacman", &["--version"]),
+    ("zypper", &["--version"]),
+    ("apk", &["--version"]),
+    ("snap", &["--version"]),
+    ("flatpak", &["--version"]),
+    ("nix", &["--version"]),
+    ("winget", &["--version"]),
+    ("choco", &["--version"]),
+    ("scoop", &["--version"]),
+];
+const VCS: &[Spec] = &[
+    ("git", &["--version"]),
+    ("hg", &["--version"]),
+    ("svn", &["--version"]),
+];
+const EDITORS: &[Spec] = &[
+    ("code", &["--version"]),
+    ("cursor", &["--version"]),
+    ("zed", &["--version"]),
+    ("vim", &["--version"]),
+    ("nvim", &["--version"]),
+    ("emacs", &["--version"]),
+];
+const CONTAINERS: &[Spec] = &[
+    ("docker", &["--version"]),
+    ("podman", &["--version"]),
+    // kubectl 1.28 起 `--short` 已废弃，`--client` 本身输出就很简洁。
+    ("kubectl", &["version", "--client"]),
+    ("colima", &["version"]),
+    ("nerdctl", &["--version"]),
+    ("helm", &["version", "--short"]),
+];
+const SHELLS: &[Spec] = &[
+    ("bash", &["--version"]),
+    ("zsh", &["--version"]),
+    ("fish", &["--version"]),
+    ("pwsh", &["--version"]),
+    // Windows PowerShell 5.1 不认 --version。
+    (
+        "powershell",
+        &[
+            "-NoProfile",
+            "-Command",
+            "$PSVersionTable.PSVersion.ToString()",
+        ],
+    ),
+];
 
 const ENV_KEYS_OF_INTEREST: &[&str] = &[
     "PATH",
@@ -23,149 +103,125 @@ const ENV_KEYS_OF_INTEREST: &[&str] = &[
     "DOCKER_HOST",
 ];
 
+/// 开发环境探测。
+///
+/// 从 Finder / 开始菜单 / 桌面启动的 GUI 程序拿到的 PATH 往往只有系统目录，
+/// 因此用 `dev_path()`（进程 PATH + 登录 shell PATH）查找和执行；
+/// 先在进程内按 PATH 解析可执行文件，找不到的工具连进程都不会启动。
 pub fn collect() -> DevEnvInfo {
-    let lang_specs: &[(&str, &[&str])] = &[
-        ("node", &["--version"]),
-        ("python3", &["--version"]),
-        ("python", &["--version"]),
-        ("rustc", &["--version"]),
-        ("go", &["version"]),
-        ("java", &["-version"]),
-        ("ruby", &["--version"]),
-        ("php", &["--version"]),
-        ("deno", &["--version"]),
-        ("bun", &["--version"]),
-    ];
-    let pm_specs: &[(&str, &[&str])] = &[
-        ("npm", &["--version"]),
-        ("pnpm", &["--version"]),
-        ("yarn", &["--version"]),
-        ("pip", &["--version"]),
-        ("pip3", &["--version"]),
-        ("cargo", &["--version"]),
-        ("brew", &["--version"]),
-        ("apt", &["--version"]),
-        ("winget", &["--version"]),
-        ("choco", &["--version"]),
-    ];
-    let vcs_specs: &[(&str, &[&str])] = &[
-        ("git", &["--version"]),
-        ("hg", &["--version"]),
-        ("svn", &["--version"]),
-    ];
-    let editor_specs: &[(&str, &[&str])] = &[
-        ("code", &["--version"]),
-        ("cursor", &["--version"]),
-        ("vim", &["--version"]),
-        ("nvim", &["--version"]),
-        ("emacs", &["--version"]),
-    ];
-    let container_specs: &[(&str, &[&str])] = &[
-        ("docker", &["--version"]),
-        ("podman", &["--version"]),
-        // `kubectl version --client --short` 在 1.28 deprecated，1.29+ 移除；
-        // `--client` 输出已经简洁，不需要 --short。
-        ("kubectl", &["version", "--client"]),
-        ("colima", &["version"]),
-        ("nerdctl", &["--version"]),
-        ("helm", &["version", "--short"]),
-    ];
-    let shell_specs: &[(&str, &[&str])] = &[
-        ("bash", &["--version"]),
-        ("zsh", &["--version"]),
-        ("fish", &["--version"]),
-        ("pwsh", &["--version"]),
-        ("powershell", &["--version"]),
-    ];
+    let path = dev_path();
+    std::thread::scope(|s| {
+        let group = |specs: &'static [Spec]| s.spawn(move || probe_group(specs, path));
+        let languages = group(LANGUAGES);
+        let package_managers = group(PACKAGE_MANAGERS);
+        let vcs = group(VCS);
+        let editors = group(EDITORS);
+        let containers = group(CONTAINERS);
+        let shells = group(SHELLS);
 
-    let languages = probe_parallel(lang_specs);
-    let package_managers = probe_parallel(pm_specs);
-    let vcs = probe_parallel(vcs_specs);
-    let editors = probe_parallel(editor_specs);
-    let containers = probe_parallel(container_specs);
-    let shells = probe_parallel(shell_specs);
-
-    let env_keys = ENV_KEYS_OF_INTEREST
-        .iter()
-        .filter(|k| std::env::var(*k).is_ok())
-        .map(|k| k.to_string())
-        .collect();
-
-    DevEnvInfo {
-        languages: filter_present(languages),
-        package_managers: filter_present(package_managers),
-        vcs: filter_present(vcs),
-        editors: filter_present(editors),
-        containers: filter_present(containers),
-        shells: filter_present(shells),
-        env_keys,
-    }
-}
-
-fn probe_parallel(specs: &[(&str, &[&str])]) -> Vec<RuntimeInfo> {
-    use std::thread;
-    let handles: Vec<_> = specs
-        .iter()
-        .map(|(name, args)| {
-            let name = name.to_string();
-            let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-            thread::spawn(move || {
-                let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                probe(&name, &args_ref)
-            })
-        })
-        .collect();
-    handles
-        .into_iter()
-        .map(|h| h.join().unwrap_or_else(|_| RuntimeInfo {
-            name: "<panic>".to_string(),
-            version: None,
-            path: None,
-        }))
-        .collect()
-}
-
-fn filter_present(rs: Vec<RuntimeInfo>) -> Vec<RuntimeInfo> {
-    rs.into_iter().filter(|r| r.version.is_some()).collect()
-}
-
-fn probe(name: &str, args: &[&str]) -> RuntimeInfo {
-    let out = Command::new(name).args(args).output();
-    let path = which(name);
-    match out {
-        Ok(o) if o.status.success() => {
-            let mut combined = String::new();
-            combined.push_str(&String::from_utf8_lossy(&o.stdout));
-            if combined.trim().is_empty() {
-                combined.push_str(&String::from_utf8_lossy(&o.stderr));
-            }
-            let line = combined.lines().next().unwrap_or("").trim().to_string();
-            let version = if line.is_empty() { None } else { Some(line) };
-            RuntimeInfo {
-                name: name.to_string(),
-                version,
-                path,
-            }
+        DevEnvInfo {
+            languages: languages.join().unwrap_or_default(),
+            package_managers: package_managers.join().unwrap_or_default(),
+            vcs: vcs.join().unwrap_or_default(),
+            editors: editors.join().unwrap_or_default(),
+            containers: containers.join().unwrap_or_default(),
+            shells: shells.join().unwrap_or_default(),
+            env_keys: ENV_KEYS_OF_INTEREST
+                .iter()
+                .filter(|k| std::env::var_os(k).is_some())
+                .map(|k| k.to_string())
+                .collect(),
         }
-        _ => RuntimeInfo {
-            name: name.to_string(),
-            version: None,
-            path,
-        },
-    }
+    })
 }
 
-fn which(name: &str) -> Option<String> {
-    let cmd = if cfg!(target_os = "windows") { "where" } else { "which" };
-    let out = Command::new(cmd).arg(name).output().ok()?;
-    if !out.status.success() {
+fn probe_group(specs: &'static [Spec], path: &'static OsString) -> Vec<RuntimeInfo> {
+    std::thread::scope(|s| {
+        let handles: Vec<_> = specs
+            .iter()
+            .map(|(name, args)| s.spawn(move || probe(name, args, path)))
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|h| h.join().ok().flatten())
+            .collect()
+    })
+}
+
+fn probe(name: &str, args: &[&str], path: &OsString) -> Option<RuntimeInfo> {
+    let exe = which(name, Some(path))?;
+    if is_installer_stub(name, &exe) {
         return None;
     }
-    let s = String::from_utf8_lossy(&out.stdout)
+    let out = run_with(exe.to_str()?, args, Duration::from_secs(5), Some(path))?;
+    if !out.ok {
+        return None;
+    }
+    // `java -version` 之类把版本写到 stderr。
+    let text = if out.stdout.trim().is_empty() {
+        &out.stderr
+    } else {
+        &out.stdout
+    };
+    let version = text
         .lines()
-        .next()
-        .unwrap_or("")
-        .trim()
+        .map(str::trim)
+        .find(|l| !l.is_empty())?
         .to_string();
-    if s.is_empty() { None } else { Some(s) }
+    Some(RuntimeInfo {
+        name: name.to_string(),
+        version: Some(version),
+        path: Some(exe.display().to_string()),
+    })
+}
+
+/// 系统自带的"安装引导桩"：执行它会弹出安装对话框，而不是输出版本，必须跳过。
+///
+/// - macOS `/usr/bin/{git,python3,svn,...}`：未装 Xcode 命令行工具时会弹"安装开发者工具"。
+/// - macOS `/usr/bin/java`：没有 JDK 时会弹"需要安装 Java"。
+/// - Windows `WindowsApps\python*.exe`：Microsoft Store 的别名桩。
+fn is_installer_stub(name: &str, exe: &std::path::Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if exe.starts_with("/usr/bin") {
+            match name {
+                "java" => {
+                    return !run_with("/usr/libexec/java_home", &[], Duration::from_secs(2), None)
+                        .is_some_and(|o| o.ok);
+                }
+                "git" | "python3" | "python" | "svn" | "hg" | "clang" | "gcc" | "swift" => {
+                    return !command_line_tools_installed();
+                }
+                _ => {}
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if name.starts_with("python")
+            && exe
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("\\microsoft\\windowsapps\\")
+        {
+            return true;
+        }
+    }
+    let _ = (name, exe);
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn command_line_tools_installed() -> bool {
+    use std::sync::OnceLock;
+    static INSTALLED: OnceLock<bool> = OnceLock::new();
+    *INSTALLED.get_or_init(|| {
+        run_with(
+            "/usr/bin/xcode-select",
+            &["-p"],
+            Duration::from_secs(2),
+            None,
+        )
+        .is_some_and(|o| o.ok)
+    })
 }

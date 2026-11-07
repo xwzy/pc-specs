@@ -1,27 +1,16 @@
 use crate::model::MemoryInfo;
-use crate::state::SharedSys;
-use std::sync::Arc;
-use sysinfo::MemoryRefreshKind;
+use sysinfo::{MemoryRefreshKind, System};
 
-pub fn collect(shared: &Arc<SharedSys>) -> MemoryInfo {
-    let mut sys = shared.system.lock();
-    sys.refresh_memory_specifics(MemoryRefreshKind::everything());
-
-    let total_bytes = sys.total_memory();
-    let used_bytes = sys.used_memory();
-    let available_bytes = sys.available_memory();
-    let swap_total_bytes = sys.total_swap();
-    let swap_used_bytes = sys.used_swap();
-
-    drop(sys);
-
-    let modules = crate::platform::memory_modules();
-    MemoryInfo {
-        total_bytes,
-        used_bytes,
-        available_bytes,
-        swap_total_bytes,
-        swap_used_bytes,
-        modules,
+pub fn collect() -> MemoryInfo {
+    let mut info = MemoryInfo::default();
+    if let Ok(mut sys) = System::new() {
+        sys.refresh_memory_specifics(MemoryRefreshKind::everything());
+        info.total_bytes = sys.total_memory();
+        info.used_bytes = sys.used_memory();
+        info.available_bytes = sys.available_memory();
+        info.swap_total_bytes = sys.total_swap();
+        info.swap_used_bytes = sys.used_swap();
     }
+    info.modules = crate::platform::memory_modules();
+    info
 }

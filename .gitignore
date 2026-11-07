@@ -1,19 +1,8 @@
-# Node / Vite
-node_modules/
-dist/
-.cache/
-.tmp/
-.eslintcache
-*.log
-.DS_Store
-*.tsbuildinfo
-.tsbuild-node/
+# Rust
+target/
 
-# Rust / Tauri
-src-tauri/target/
-src-tauri/Cargo.lock.bak
-src-tauri/.cargo/
-.tauri/
+# 打包产物（scripts/package.sh）
+dist/
 
 # IDE
 .idea/
@@ -21,6 +10,7 @@ src-tauri/.cargo/
 *.iml
 
 # OS
+.DS_Store
 Thumbs.db
 
 # Env

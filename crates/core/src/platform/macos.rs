@@ -1,224 +1,252 @@
+use super::CpuDetails;
 use crate::model::{MemoryModule, MotherboardInfo, SensorReading};
-use std::process::Command;
+use crate::util::{clean_dmi, run_stdout_timeout, sysctl};
+use parking_lot::Mutex;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
-fn sysctl(key: &str) -> Option<String> {
-    let out = Command::new("sysctl").arg("-n").arg(key).output().ok()?;
-    if !out.status.success() {
-        return None;
+type ProfilerSlot = Arc<Mutex<Option<(Instant, Option<Value>)>>>;
+
+/// `system_profiler -json <type>` 的带缓存封装。
+///
+/// 快照各模块并行采集时，GPU / 显示器共用 `SPDisplaysDataType`（约 2 秒），
+/// 同一类型只会真正执行一次，其余调用方等待并复用结果。
+pub(crate) fn system_profiler(data_type: &'static str) -> Option<Value> {
+    static CACHE: LazyLock<Mutex<HashMap<&'static str, ProfilerSlot>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    const TTL: Duration = Duration::from_secs(60);
+
+    let slot = CACHE.lock().entry(data_type).or_default().clone();
+    let mut guard = slot.lock();
+    if let Some((at, value)) = guard.as_ref()
+        && at.elapsed() < TTL
+    {
+        return value.clone();
     }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    let value = run_stdout_timeout(
+        "/usr/sbin/system_profiler",
+        &["-json", data_type],
+        Duration::from_secs(25),
+    )
+    .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    *guard = Some((Instant::now(), value.clone()));
+    value
 }
 
-/// 把 hw.model 或 hw.machine 解析成可读的 Apple Silicon 名称，
-/// 比如 "Mac14,5" → "Apple Silicon (Mac14,5)"，"j274" → "Apple Silicon (j274)"。
-/// 这只是一个 fallback，machdep.cpu.brand_string 一般在 Intel Mac 上能给出完整型号；
-/// Apple Silicon 上某些 macOS 版本会返回 "Apple M1"/"Apple M2"/"Apple M3" 等准确字符串。
-fn humanize_apple_silicon(s: &str) -> String {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return "Apple Silicon".to_string();
+/// 取 `SP*DataType` 数组的第一项。
+pub(crate) fn profiler_first(data_type: &'static str) -> Option<Value> {
+    system_profiler(data_type)?
+        .get(data_type)?
+        .as_array()?
+        .first()
+        .cloned()
+}
+
+const ARM_FEATURES: &[&str] = &[
+    "AES", "PMULL", "SHA1", "SHA256", "SHA512", "SHA3", "CRC32", "LSE", "LSE2", "RDM", "FP16",
+    "FHM", "DotProd", "BF16", "I8MM", "FCMA", "JSCVT", "FlagM", "FlagM2", "FRINTTS", "SB", "SSBS",
+    "PAuth", "FPAC", "BTI", "DPB", "DPB2", "LRCPC", "LRCPC2", "ECV", "AFP", "EBF16", "CSV2",
+    "CSV3", "DIT", "SME", "SME2",
+];
+
+pub fn cpu_details() -> CpuDetails {
+    let is_arm = cfg!(target_arch = "aarch64");
+
+    let mut features: Vec<String> = Vec::new();
+    if is_arm {
+        if sysctl::uint("hw.optional.neon") == Some(1) {
+            features.push("neon".to_string());
+        }
+        for f in ARM_FEATURES {
+            if sysctl::uint(&format!("hw.optional.arm.FEAT_{f}")) == Some(1) {
+                features.push(f.to_ascii_lowercase());
+            }
+        }
+    } else {
+        for key in [
+            "machdep.cpu.features",
+            "machdep.cpu.leaf7_features",
+            "machdep.cpu.extfeatures",
+        ] {
+            if let Some(s) = sysctl::string(key) {
+                features.extend(s.split_whitespace().map(|t| t.to_ascii_lowercase()));
+            }
+        }
     }
-    let lower = trimmed.to_lowercase();
-    // 已经是 brand_string 形式："Apple M1 Pro" / "Apple M3 Max"
-    if lower.starts_with("apple m") {
-        return trimmed.to_string();
+    features.sort();
+    features.dedup();
+
+    // Apple Silicon 的 perflevel0 是性能核，缓存取它才符合 "每核" 语义。
+    let cache = |level: &str, plain: &str| {
+        sysctl::uint(&format!("hw.perflevel0.{level}")).or_else(|| sysctl::uint(plain))
+    };
+    let p = sysctl::uint("hw.perflevel0.physicalcpu").map(|v| v as u32);
+    let e = sysctl::uint("hw.perflevel1.physicalcpu").map(|v| v as u32);
+
+    CpuDetails {
+        brand: sysctl::string("machdep.cpu.brand_string"),
+        features,
+        l1: cache("l1dcachesize", "hw.l1dcachesize").filter(|v| *v > 0),
+        l2: cache("l2cachesize", "hw.l2cachesize").filter(|v| *v > 0),
+        l3: sysctl::uint("hw.l3cachesize").filter(|v| *v > 0),
+        sockets: sysctl::uint("hw.packages").map(|v| v as u32),
+        // 非混合架构（Intel Mac）没有 perflevel1，不展示 P/E 拆分。
+        p_cores: e.is_some().then_some(p).flatten(),
+        e_cores: e,
+        numa_nodes: Some(1),
+        base_hz: sysctl::uint("hw.cpufrequency").filter(|v| *v > 0),
+        max_hz: sysctl::uint("hw.cpufrequency_max").filter(|v| *v > 0),
+        live_frequency: !is_arm,
+        virtualization: sysctl::uint("kern.hv_support").map(|v| v == 1),
     }
-    format!("Apple Silicon ({trimmed})")
 }
 
 pub fn motherboard() -> Option<MotherboardInfo> {
-    let model = sysctl("hw.model");
-    let vendor = Some("Apple".to_string());
+    let hw = profiler_first("SPHardwareDataType");
+    let get = |k: &str| -> Option<String> { hw.as_ref()?.get(k)?.as_str().and_then(clean_dmi) };
+    let identifier = sysctl::string("hw.model").or_else(|| get("machine_model"));
+    let name = get("machine_name");
+    let chassis = detect_chassis(name.as_deref(), identifier.as_deref());
+    let model = match (name, identifier.clone()) {
+        (Some(n), Some(i)) => Some(format!("{n} ({i})")),
+        (None, Some(i)) => Some(i),
+        (Some(n), None) => Some(n),
+        _ => None,
+    };
+    let (serial, board_vendor) = match sysinfo::Motherboard::new() {
+        Ok(m) => (m.serial_number(), m.vendor_name()),
+        Err(_) => (None, None),
+    };
     Some(MotherboardInfo {
-        vendor,
+        vendor: Some(board_vendor.unwrap_or_else(|| "Apple".to_string())),
         model,
-        version: None,
-        serial: None,
-        bios_vendor: None,
-        bios_version: None,
+        version: get("model_number"),
+        serial: serial.or_else(|| get("serial_number")),
+        bios_vendor: Some("Apple".to_string()),
+        bios_version: get("os_loader_version").or_else(|| get("boot_rom_version")),
         bios_date: None,
-        chassis: Some(detect_chassis()),
+        chassis,
     })
 }
 
-fn detect_chassis() -> String {
-    // hw.model 实际形如 "MacBookPro18,2" / "Macmini9,1" / "iMac20,1" / "MacPro7,1" / "Mac14,3"
-    sysctl("hw.model")
-        .map(|m| {
-            let lower = m.to_lowercase();
-            if lower.starts_with("macbook") || lower.contains("book") {
-                "Laptop".to_string()
-            } else if lower.starts_with("macmini") || lower.contains("mini") {
-                "Mini-PC".to_string()
-            } else if lower.starts_with("imac") {
-                "All-in-One".to_string()
-            } else if lower.starts_with("macpro") || lower.contains("rackmac") {
-                "Workstation".to_string()
-            } else if lower.starts_with("macstudio") || lower.contains("studio") {
-                "Studio".to_string()
-            } else {
-                "Desktop".to_string()
-            }
-        })
-        .unwrap_or_else(|| "Unknown".to_string())
+/// Intel Mac 的 `hw.model` 形如 "MacBookPro16,1" / "Macmini8,1"，但 Apple Silicon 只给 "Mac14,5"，
+/// 所以优先看营销名（"MacBook Pro" / "Mac mini" / "Mac Studio"…），标识符只作后备。
+fn detect_chassis(marketing_name: Option<&str>, identifier: Option<&str>) -> Option<String> {
+    let text = [marketing_name, identifier]
+        .into_iter()
+        .flatten()
+        .map(|s| s.to_ascii_lowercase().replace(' ', ""))
+        .collect::<Vec<_>>();
+    let has = |prefix: &str| text.iter().any(|t| t.starts_with(prefix));
+    let label = if has("macbook") {
+        "Laptop"
+    } else if has("macmini") {
+        "Mini-PC"
+    } else if has("imac") {
+        "All-in-One"
+    } else if has("macpro") {
+        "Workstation"
+    } else if has("macstudio") {
+        "Studio"
+    } else if text.is_empty() {
+        return None;
+    } else {
+        "Desktop"
+    };
+    Some(label.to_string())
 }
 
 pub fn memory_modules() -> Vec<MemoryModule> {
-    // Apple Silicon 内存焊死在 SoC 中，没有 DIMM 槽；但 system_profiler 仍能给出
-    // 总览信息（manufacturer / type / speed），适合作为单条"虚拟 DIMM"展示。
-    // Intel Mac 上则会列出每根条。
-    let out = match Command::new("system_profiler")
-        .args(["-json", "SPMemoryDataType"])
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    // Apple Silicon 内存封装在 SoC 上，system_profiler 只给一条总览；
+    // Intel Mac 会按 DIMM 逐条列出。
+    let Some(v) = system_profiler("SPMemoryDataType") else {
+        return Vec::new();
     };
-    let v: serde_json::Value = match serde_json::from_slice(&out.stdout) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
+    let Some(arr) = v.get("SPMemoryDataType").and_then(|x| x.as_array()) else {
+        return Vec::new();
     };
-    let arr = match v.get("SPMemoryDataType").and_then(|x| x.as_array()) {
-        Some(a) => a,
-        None => return Vec::new(),
-    };
-
     let mut modules = Vec::new();
     for entry in arr {
-        // Intel Mac 路径：entry 内有 _items 数组，每项是一根 DIMM
         if let Some(items) = entry.get("_items").and_then(|x| x.as_array()) {
-            for item in items {
-                if let Some(m) = parse_macos_memory_item(item) {
-                    modules.push(m);
-                }
-            }
-            continue;
-        }
-        // Apple Silicon 路径：直接展示总览
-        if let Some(m) = parse_macos_memory_summary(entry) {
+            modules.extend(items.iter().filter_map(parse_dimm));
+        } else if let Some(m) = parse_onboard(entry) {
             modules.push(m);
         }
     }
     modules
 }
 
-fn parse_macos_memory_item(item: &serde_json::Value) -> Option<MemoryModule> {
-    let slot = item
-        .get("_name")
-        .and_then(|s| s.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "DIMM".to_string());
-    let manufacturer = item
-        .get("dimm_manufacturer")
+fn json_str(v: &Value, key: &str) -> Option<String> {
+    v.get(key)
         .and_then(|s| s.as_str())
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let part_number = item
-        .get("dimm_part_number")
-        .and_then(|s| s.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let capacity_bytes = item
-        .get("dimm_size")
-        .and_then(|s| s.as_str())
-        .and_then(parse_macos_size)
-        .unwrap_or(0);
-    let speed_mt_s = item
-        .get("dimm_speed")
-        .and_then(|s| s.as_str())
-        .and_then(parse_macos_speed);
-    let kind = item
-        .get("dimm_type")
-        .and_then(|s| s.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+}
 
+fn parse_dimm(item: &Value) -> Option<MemoryModule> {
+    let manufacturer = json_str(item, "dimm_manufacturer").filter(|s| s != "0x0000");
+    let part_number = json_str(item, "dimm_part_number").filter(|s| s != "-");
+    let capacity_bytes = json_str(item, "dimm_size")
+        .and_then(|s| parse_size(&s))
+        .unwrap_or(0);
     if capacity_bytes == 0 && manufacturer.is_none() && part_number.is_none() {
         return None;
     }
     Some(MemoryModule {
-        slot,
+        slot: json_str(item, "_name").unwrap_or_else(|| "DIMM".to_string()),
         manufacturer,
         part_number,
         capacity_bytes,
-        speed_mt_s,
-        kind,
+        speed_mt_s: json_str(item, "dimm_speed").and_then(|s| parse_speed(&s)),
+        kind: json_str(item, "dimm_type"),
         form_factor: Some("DIMM".to_string()),
     })
 }
 
-fn parse_macos_memory_summary(entry: &serde_json::Value) -> Option<MemoryModule> {
-    let capacity = entry
-        .get("SPMemoryDataType")
-        .or_else(|| entry.get("dimm_size"))
-        .or_else(|| entry.get("physical_memory"))
-        .and_then(|s| s.as_str())
-        .and_then(parse_macos_size)
+fn parse_onboard(entry: &Value) -> Option<MemoryModule> {
+    let capacity_bytes = json_str(entry, "SPMemoryDataType")
+        .or_else(|| json_str(entry, "dimm_size"))
+        .and_then(|s| parse_size(&s))
         .unwrap_or(0);
-    let kind = entry
-        .get("dimm_type")
-        .and_then(|s| s.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let manufacturer = entry
-        .get("dimm_manufacturer")
-        .and_then(|s| s.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| Some("Apple".to_string()));
-    if capacity == 0 && kind.is_none() {
+    let kind = json_str(entry, "dimm_type");
+    if capacity_bytes == 0 && kind.is_none() {
         return None;
     }
     Some(MemoryModule {
         slot: "Onboard".to_string(),
-        manufacturer,
+        manufacturer: json_str(entry, "dimm_manufacturer").or_else(|| Some("Apple".to_string())),
         part_number: None,
-        capacity_bytes: capacity,
+        capacity_bytes,
         speed_mt_s: None,
         kind,
         form_factor: Some("Soldered".to_string()),
     })
 }
 
-/// 解析 "8 GB" / "16 GB" / "32 GB" → 字节
-fn parse_macos_size(s: &str) -> Option<u64> {
-    let s = s.trim();
-    let (num_part, unit_part) = s.split_once(' ')?;
-    let n: u64 = num_part.parse().ok()?;
-    let mul: u64 = match unit_part.to_uppercase().as_str() {
-        "TB" => 1024 * 1024 * 1024 * 1024,
-        "GB" => 1024 * 1024 * 1024,
-        "MB" => 1024 * 1024,
+/// "8 GB" / "16 GB" → 字节
+fn parse_size(s: &str) -> Option<u64> {
+    let (num, unit) = s.trim().split_once(' ')?;
+    let n: u64 = num.parse().ok()?;
+    let mul: u64 = match unit.to_ascii_uppercase().as_str() {
+        "TB" => 1 << 40,
+        "GB" => 1 << 30,
+        "MB" => 1 << 20,
         _ => return None,
     };
     Some(n * mul)
 }
 
-/// 解析 "3200 MHz" / "DDR4 3200 MHz" → MT/s（约等）
-fn parse_macos_speed(s: &str) -> Option<u32> {
-    s.split_whitespace()
-        .filter_map(|w| w.parse::<u32>().ok())
-        .next()
+/// "3200 MHz" / "DDR4 3200 MHz" → 3200
+fn parse_speed(s: &str) -> Option<u32> {
+    s.split_whitespace().find_map(|w| w.parse::<u32>().ok())
 }
 
-pub fn cpu_brand() -> Option<String> {
-    if let Some(s) = sysctl("machdep.cpu.brand_string") {
-        if !s.is_empty() {
-            return Some(s);
-        }
-    }
-    // Apple Silicon 上 brand_string 为空，回退到 hw.model 并 humanize
-    sysctl("hw.model")
-        .or_else(|| sysctl("hw.machine"))
-        .or_else(|| sysctl("hw.targettype"))
-        .map(|s| humanize_apple_silicon(&s))
-}
-
-pub fn cpu_sockets() -> Option<u32> {
-    sysctl("hw.packages").and_then(|s| s.parse::<u32>().ok())
-}
-
-pub fn sensors() -> Vec<SensorReading> {
+pub fn extra_sensors() -> Vec<SensorReading> {
     Vec::new()
+}
+
+pub fn desktop_env() -> Option<String> {
+    Some("Aqua".to_string())
 }

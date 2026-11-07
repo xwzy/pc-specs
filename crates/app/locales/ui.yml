@@ -1,0 +1,1138 @@
+_version: 2
+alert_cpu:
+  en: "CPU usage is %{value}%"
+  zh-CN: "CPU 占用达到 %{value}%"
+alert_disk:
+  en: "Disk %{name} is %{value}% full"
+  zh-CN: "磁盘 %{name} 已使用 %{value}%"
+alert_mem:
+  en: "Memory usage is %{value}%"
+  zh-CN: "内存占用达到 %{value}%"
+alert_temp:
+  en: "Temperature reached %{value}"
+  zh-CN: "温度达到 %{value}"
+alert_title:
+  en: "Resource alert"
+  zh-CN: "资源告警"
+app_name:
+  en: "PC Specs"
+  zh-CN: "PC Specs"
+app_tagline:
+  en: "Cross-platform spec viewer & monitor"
+  zh-CN: "跨平台电脑配置查看 · 实时监控"
+autostart_failed:
+  en: "Couldn't change launch at login: %{error}"
+  zh-CN: "无法修改开机自启：%{error}"
+bat_curr_cap:
+  en: "Current capacity"
+  zh-CN: "当前容量"
+bat_cycle:
+  en: "Cycle count"
+  zh-CN: "充放电循环"
+bat_design_cap:
+  en: "Design capacity"
+  zh-CN: "设计容量"
+bat_full_cap:
+  en: "Full capacity"
+  zh-CN: "实际满容量"
+bat_health:
+  en: "Health"
+  zh-CN: "电池健康"
+bat_no_battery:
+  en: "No battery detected"
+  zh-CN: "未检测到电池"
+bat_no_battery_hint:
+  en: "Desktop machine or module not enabled"
+  zh-CN: "台式机或暂未启用此模块"
+bat_power:
+  en: "Power"
+  zh-CN: "充放电功率"
+bat_state_charging:
+  en: "Charging"
+  zh-CN: "充电中"
+bat_state_discharging:
+  en: "Discharging"
+  zh-CN: "放电中"
+bat_state_empty:
+  en: "Empty"
+  zh-CN: "已耗尽"
+bat_state_full:
+  en: "Full"
+  zh-CN: "已充满"
+bat_state_unknown:
+  en: "Unknown"
+  zh-CN: "未知"
+bat_time_to_empty:
+  en: "Time to empty"
+  zh-CN: "剩余使用"
+bat_time_to_full:
+  en: "Time to full"
+  zh-CN: "充满还需"
+common_copied:
+  en: "Copied"
+  zh-CN: "已复制"
+common_copy:
+  en: "Copy"
+  zh-CN: "复制"
+common_loading:
+  en: "Loading…"
+  zh-CN: "加载中…"
+common_no:
+  en: "No"
+  zh-CN: "否"
+common_read:
+  en: "Read"
+  zh-CN: "读取"
+common_refresh:
+  en: "Refresh"
+  zh-CN: "刷新"
+common_write:
+  en: "Write"
+  zh-CN: "写入"
+common_yes:
+  en: "Yes"
+  zh-CN: "是"
+count_found:
+  en: "%{n} found"
+  zh-CN: "共 %{n} 项"
+cpu_cache_l1:
+  en: "L1 cache"
+  zh-CN: "L1 缓存"
+cpu_cache_l2:
+  en: "L2 cache"
+  zh-CN: "L2 缓存"
+cpu_cache_l3:
+  en: "L3 cache"
+  zh-CN: "L3 缓存"
+cpu_details:
+  en: "Details"
+  zh-CN: "详细信息"
+cpu_e_cores:
+  en: "E-cores"
+  zh-CN: "E 核心"
+cpu_geek_panel:
+  en: "Topology and instruction sets"
+  zh-CN: "极客面板 · 拓扑 & 指令集"
+cpu_isa_features:
+  en: "ISA features"
+  zh-CN: "ISA 指令集"
+cpu_no_features:
+  en: "Not exposed by this operating system"
+  zh-CN: "当前操作系统未暴露指令集信息"
+cpu_numa:
+  en: "NUMA nodes"
+  zh-CN: "NUMA 节点"
+cpu_p_cores:
+  en: "P-cores"
+  zh-CN: "P 核心"
+cpu_per_core:
+  en: "Per-core usage"
+  zh-CN: "每核心占用"
+cpu_sockets:
+  en: "Sockets"
+  zh-CN: "处理器数"
+cpu_usage_live:
+  en: "CPU usage (live)"
+  zh-CN: "CPU 占用（实时）"
+cpu_virtualization:
+  en: "Virtualization"
+  zh-CN: "虚拟化"
+dash_all_normal:
+  en: "All systems normal"
+  zh-CN: "一切正常"
+dash_card_cpu:
+  en: "CPU"
+  zh-CN: "CPU"
+dash_card_memory:
+  en: "Memory"
+  zh-CN: "内存"
+dash_card_network:
+  en: "Network"
+  zh-CN: "网络"
+dash_card_sensors:
+  en: "Sensors"
+  zh-CN: "传感器"
+dash_card_storage:
+  en: "Storage"
+  zh-CN: "存储"
+dash_cores_short:
+  en: "%{p}P · %{e}E"
+  zh-CN: "%{p}P · %{e}E"
+dash_cores_simple:
+  en: "%{n} cores"
+  zh-CN: "%{n} 核心"
+dash_health_critical:
+  en: "Critical"
+  zh-CN: "严重"
+dash_health_healthy:
+  en: "Healthy"
+  zh-CN: "健康"
+dash_health_warning:
+  en: "Warning"
+  zh-CN: "警告"
+dash_hottest:
+  en: "Hottest sensor"
+  zh-CN: "最高温度"
+dash_no_temp:
+  en: "No temperature data"
+  zh-CN: "无温度数据"
+dash_summary_battery:
+  en: "Battery"
+  zh-CN: "电池"
+dash_summary_cpu:
+  en: "Processor"
+  zh-CN: "处理器"
+dash_summary_display:
+  en: "Display"
+  zh-CN: "显示器"
+dash_summary_gpu:
+  en: "Graphics"
+  zh-CN: "显卡"
+dash_summary_memory:
+  en: "Memory"
+  zh-CN: "内存"
+dash_summary_motherboard:
+  en: "Motherboard"
+  zh-CN: "主板"
+dash_summary_network:
+  en: "Network"
+  zh-CN: "网络"
+dash_summary_os:
+  en: "Operating system"
+  zh-CN: "操作系统"
+dash_summary_storage:
+  en: "Primary storage"
+  zh-CN: "主存储"
+dash_summary_title:
+  en: "Hardware summary"
+  zh-CN: "硬件配置摘要"
+dev_containers:
+  en: "Containers"
+  zh-CN: "容器 / 编排"
+dev_editors:
+  en: "Editors"
+  zh-CN: "编辑器"
+dev_env_keys:
+  en: "Environment variables"
+  zh-CN: "环境变量"
+dev_env_keys_hint:
+  en: "Only key names are shown; values are never exposed"
+  zh-CN: "仅展示存在的 KEY 名，不展示 VALUE"
+dev_languages:
+  en: "Languages"
+  zh-CN: "编程语言"
+dev_no_data:
+  en: "No toolchains detected"
+  zh-CN: "未探测到任何工具链"
+dev_package_managers:
+  en: "Package managers"
+  zh-CN: "包管理器"
+dev_shells:
+  en: "Shells"
+  zh-CN: "Shell"
+dev_vcs:
+  en: "Version control"
+  zh-CN: "版本控制"
+disp_color:
+  en: "Color"
+  zh-CN: "色深"
+disp_diagonal:
+  en: "Diagonal"
+  zh-CN: "对角线"
+disp_layout_preview:
+  en: "Layout preview"
+  zh-CN: "布局预览"
+disp_logical:
+  en: "Logical"
+  zh-CN: "逻辑分辨率"
+disp_no_data:
+  en: "Display info unavailable"
+  zh-CN: "未读取到显示器信息"
+disp_no_data_hint:
+  en: "Display detection not yet enabled on all platforms"
+  zh-CN: "此版本暂未在所有平台启用显示器探测"
+disp_physical:
+  en: "Physical"
+  zh-CN: "物理尺寸"
+disp_ppi:
+  en: "Pixel density"
+  zh-CN: "像素密度"
+disp_primary:
+  en: "Primary"
+  zh-CN: "主屏"
+disp_scale:
+  en: "Scale"
+  zh-CN: "缩放"
+export_btn_copy:
+  en: "Copy all"
+  zh-CN: "复制全部"
+export_btn_json:
+  en: "JSON"
+  zh-CN: "JSON"
+export_btn_md:
+  en: "Markdown"
+  zh-CN: "Markdown"
+export_btn_png:
+  en: "PNG poster"
+  zh-CN: "PNG 长图"
+export_btn_refresh:
+  en: "Regenerate"
+  zh-CN: "重新生成"
+export_btn_save:
+  en: "Save to file"
+  zh-CN: "保存到文件"
+export_chars_suffix:
+  en: "characters"
+  zh-CN: "字符"
+export_desc:
+  en: "Export the current full snapshot"
+  zh-CN: "导出当前完整快照"
+export_generating:
+  en: "Generating…"
+  zh-CN: "生成中…"
+export_png_hint:
+  en: "Long-form PNG poster, 1200px wide, dark theme — perfect for forum / chat sharing."
+  zh-CN: "PNG 长图适合发到群 / 论坛分享，固定 1200px 宽，深色风格。"
+export_png_rendering:
+  en: "Rendering…"
+  zh-CN: "渲染中…"
+export_preview:
+  en: "Preview"
+  zh-CN: "预览"
+export_save_done:
+  en: "Saved to %{path}"
+  zh-CN: "已保存到 %{path}"
+export_save_failed:
+  en: "Save failed: %{error}"
+  zh-CN: "保存失败：%{error}"
+export_sensitive_keys:
+  en: "MAC / serial / hostname / public IP"
+  zh-CN: "MAC / 序列号 / 主机名 / 公网 IP"
+export_sensitive_off:
+  en: "Sensitive data redacted (MAC / serial / hostname …)."
+  zh-CN: "已隐藏敏感信息（MAC / 序列号 / 主机名 等）。"
+export_sensitive_on:
+  en: "Sensitive data included: "
+  zh-CN: "包含敏感信息："
+export_tag_sensitive:
+  en: "Sensitive data"
+  zh-CN: "含敏感信息"
+export_title:
+  en: "Export"
+  zh-CN: "导出"
+gpu_discrete:
+  en: "Discrete"
+  zh-CN: "独立显卡"
+gpu_geek_panel:
+  en: "Adapter details"
+  zh-CN: "极客面板 · Adapter raw"
+gpu_integrated:
+  en: "Integrated"
+  zh-CN: "集成显卡"
+gpu_no_devices:
+  en: "No GPU detected"
+  zh-CN: "未检测到任何 GPU"
+gpu_no_devices_hint:
+  en: "Driver not installed or hidden by OS"
+  zh-CN: "可能驱动未安装或被系统隐藏"
+gpu_power:
+  en: "Power"
+  zh-CN: "功耗"
+gpu_utilization:
+  en: "Utilization"
+  zh-CN: "占用率"
+gpu_vram_total:
+  en: "VRAM total"
+  zh-CN: "显存总量"
+gpu_vram_used:
+  en: "VRAM used"
+  zh-CN: "显存已用"
+mb_bios_date:
+  en: "BIOS date"
+  zh-CN: "BIOS 日期"
+mb_bios_vendor:
+  en: "BIOS vendor"
+  zh-CN: "BIOS 厂商"
+mb_bios_version:
+  en: "BIOS version"
+  zh-CN: "BIOS 版本"
+mb_board_version:
+  en: "Board version"
+  zh-CN: "主板版本"
+mb_chassis:
+  en: "Chassis"
+  zh-CN: "机箱类型"
+mb_no_data:
+  en: "Motherboard info unavailable"
+  zh-CN: "未读取到主板信息"
+mb_no_data_hint:
+  en: "Some platforms restrict access without admin"
+  zh-CN: "部分平台或权限受限时不可用"
+mem_modules:
+  en: "Modules"
+  zh-CN: "内存条"
+mem_no_modules:
+  en: "Memory module details unavailable"
+  zh-CN: "未读取到内存条详情"
+mem_no_modules_hint:
+  en: "Most platforms require admin or dmidecode"
+  zh-CN: "多数平台需要管理员权限或 dmidecode"
+mem_swap:
+  en: "Swap"
+  zh-CN: "交换空间"
+mem_swap_pct:
+  en: "Swap usage"
+  zh-CN: "Swap 占用"
+mem_swap_total:
+  en: "Swap total"
+  zh-CN: "Swap 总量"
+mem_swap_used:
+  en: "Swap used"
+  zh-CN: "Swap 已用"
+mem_table_capacity:
+  en: "Capacity"
+  zh-CN: "容量"
+mem_table_form:
+  en: "Form"
+  zh-CN: "形态"
+mem_table_manufacturer:
+  en: "Manufacturer"
+  zh-CN: "厂商"
+mem_table_part:
+  en: "Part"
+  zh-CN: "型号"
+mem_table_slot:
+  en: "Slot"
+  zh-CN: "插槽"
+mem_table_speed:
+  en: "Speed"
+  zh-CN: "速率"
+mem_table_type:
+  en: "Type"
+  zh-CN: "类型"
+mem_usage_live:
+  en: "Memory usage (live)"
+  zh-CN: "内存使用率（实时）"
+monitor_clear:
+  en: "Clear history"
+  zh-CN: "清空历史"
+monitor_cpu_pct:
+  en: "CPU usage (%)"
+  zh-CN: "CPU 占用 %"
+monitor_disk_io:
+  en: "Disk I/O (%{unit})"
+  zh-CN: "磁盘 I/O（%{unit}）"
+monitor_down:
+  en: "Download"
+  zh-CN: "下载"
+monitor_gpu:
+  en: "GPU usage (%)"
+  zh-CN: "GPU 占用（%）"
+monitor_hottest:
+  en: "Hottest sensor"
+  zh-CN: "最高温度"
+monitor_mem_pct:
+  en: "Memory usage (%)"
+  zh-CN: "内存占用 %"
+monitor_net:
+  en: "Network (%{unit})"
+  zh-CN: "网络（%{unit}）"
+monitor_no_data:
+  en: "Waiting for data…"
+  zh-CN: "等待数据…"
+monitor_no_temp:
+  en: "No temperature data"
+  zh-CN: "无可用温度数据"
+monitor_pause:
+  en: "Pause"
+  zh-CN: "暂停"
+monitor_paused:
+  en: "Paused"
+  zh-CN: "已暂停"
+monitor_per_core_latest:
+  en: "Per-core usage (latest)"
+  zh-CN: "每核心占用（最新）"
+monitor_resume:
+  en: "Resume"
+  zh-CN: "继续"
+monitor_temp_unit:
+  en: "Temperatures (%{unit})"
+  zh-CN: "温度（%{unit}）"
+monitor_title:
+  en: "Real-time monitor"
+  zh-CN: "实时监控"
+monitor_up:
+  en: "Upload"
+  zh-CN: "上传"
+nav_battery:
+  en: "Battery"
+  zh-CN: "电池"
+nav_cpu:
+  en: "CPU"
+  zh-CN: "处理器"
+nav_dashboard:
+  en: "Dashboard"
+  zh-CN: "概览"
+nav_dev_env:
+  en: "Dev environment"
+  zh-CN: "开发环境"
+nav_display:
+  en: "Display"
+  zh-CN: "显示"
+nav_export:
+  en: "Export"
+  zh-CN: "导出"
+nav_gpu:
+  en: "GPU"
+  zh-CN: "显卡"
+nav_group_hardware:
+  en: "Hardware"
+  zh-CN: "硬件"
+nav_group_overview:
+  en: "Overview"
+  zh-CN: "总览"
+nav_group_system:
+  en: "System"
+  zh-CN: "系统"
+nav_memory:
+  en: "Memory"
+  zh-CN: "内存"
+nav_monitor:
+  en: "Monitor"
+  zh-CN: "实时监控"
+nav_motherboard:
+  en: "Motherboard"
+  zh-CN: "主板"
+nav_network:
+  en: "Network"
+  zh-CN: "网络"
+nav_os:
+  en: "Operating system"
+  zh-CN: "操作系统"
+nav_peripherals:
+  en: "Peripherals"
+  zh-CN: "外设"
+nav_processes:
+  en: "Processes"
+  zh-CN: "进程"
+nav_sensors:
+  en: "Sensors"
+  zh-CN: "传感器"
+nav_settings:
+  en: "Settings"
+  zh-CN: "设置"
+nav_storage:
+  en: "Storage"
+  zh-CN: "存储"
+net_dns_short:
+  en: "DNS"
+  zh-CN: "DNS"
+net_gw_short:
+  en: "Gateway"
+  zh-CN: "网关"
+net_iface_live:
+  en: "Live rate"
+  zh-CN: "实时速率"
+net_interfaces:
+  en: "Interfaces"
+  zh-CN: "网络接口"
+net_no_interfaces:
+  en: "No interfaces"
+  zh-CN: "无可用网卡"
+net_public_prefix:
+  en: "Public"
+  zh-CN: "公网"
+net_query_loading:
+  en: "Querying…"
+  zh-CN: "查询中…"
+net_query_public:
+  en: "Query public IP"
+  zh-CN: "查询公网 IP"
+net_rx_total:
+  en: "Received"
+  zh-CN: "已接收"
+net_throughput:
+  en: "Throughput (live)"
+  zh-CN: "实时吞吐"
+net_tx_total:
+  en: "Sent"
+  zh-CN: "已发送"
+os_app_version:
+  en: "App version"
+  zh-CN: "应用版本"
+os_family:
+  en: "Family"
+  zh-CN: "系统"
+os_name:
+  en: "Name"
+  zh-CN: "名称"
+os_since:
+  en: "Since"
+  zh-CN: "自"
+os_version:
+  en: "Version"
+  zh-CN: "版本"
+peri_bus:
+  en: "Bus / type"
+  zh-CN: "总线 / 类型"
+peri_ids:
+  en: "Vendor / ID"
+  zh-CN: "厂商 / ID"
+peri_kind:
+  en: "Kind"
+  zh-CN: "类别"
+peri_name:
+  en: "Name"
+  zh-CN: "名称"
+peri_no_devices:
+  en: "No peripherals detected"
+  zh-CN: "未检测到外设"
+peri_no_devices_hint:
+  en: "Linux reads /sys/bus/usb; macOS / Windows uses system APIs"
+  zh-CN: "Linux 需读取 /sys/bus/usb，macOS / Windows 走系统 API"
+proc_col_cpu:
+  en: "CPU"
+  zh-CN: "CPU"
+proc_col_mem:
+  en: "Memory"
+  zh-CN: "内存"
+proc_col_name:
+  en: "Name"
+  zh-CN: "名称"
+proc_col_pid:
+  en: "PID"
+  zh-CN: "PID"
+proc_col_read:
+  en: "Disk read"
+  zh-CN: "磁盘读取"
+proc_col_write:
+  en: "Disk write"
+  zh-CN: "磁盘写入"
+proc_count:
+  en: "%{n} processes"
+  zh-CN: "%{n} 个进程"
+proc_empty:
+  en: "No matching processes"
+  zh-CN: "没有匹配的进程"
+proc_search:
+  en: "Filter by name or PID…"
+  zh-CN: "按名称或 PID 筛选…"
+proc_title:
+  en: "Processes"
+  zh-CN: "进程"
+sensors_current:
+  en: "Current"
+  zh-CN: "电流"
+sensors_fan:
+  en: "Fan"
+  zh-CN: "风扇"
+sensors_no_data:
+  en: "No sensor data"
+  zh-CN: "无传感器数据"
+sensors_no_data_hint:
+  en: "May require root or unsupported by hardware on some platforms"
+  zh-CN: "部分平台需 root 权限或硬件不支持"
+sensors_other:
+  en: "Other"
+  zh-CN: "其他"
+sensors_power:
+  en: "Power"
+  zh-CN: "功耗"
+sensors_temperature:
+  en: "Temperature"
+  zh-CN: "温度"
+sensors_voltage:
+  en: "Voltage"
+  zh-CN: "电压"
+settings_about:
+  en: "About"
+  zh-CN: "关于"
+settings_about_config:
+  en: "Settings file"
+  zh-CN: "配置文件"
+settings_about_desc:
+  en: "A cross-platform PC config viewer for gaming enthusiasts and programming geeks."
+  zh-CN: "一款面向游戏发烧友与编程极客的跨平台电脑配置查看与监控工具。"
+settings_about_platform:
+  en: "Platform"
+  zh-CN: "平台"
+settings_about_privacy:
+  en: "Runs entirely on this device. No network access unless public IP lookup is used."
+  zh-CN: "完全在本机运行；除非使用公网 IP 查询，否则不会联网。"
+settings_about_reveal:
+  en: "Show in folder"
+  zh-CN: "在文件夹中显示"
+settings_about_version:
+  en: "Version"
+  zh-CN: "版本"
+settings_alerts:
+  en: "Threshold alerts"
+  zh-CN: "阈值提醒"
+settings_alerts_hint:
+  en: "Notify when CPU, memory, disk or temperature stays too high."
+  zh-CN: "当 CPU、内存、磁盘或温度持续过高时发出通知。"
+settings_appearance:
+  en: "Appearance"
+  zh-CN: "外观"
+settings_autostart:
+  en: "Launch at login"
+  zh-CN: "开机自启"
+settings_autostart_hint:
+  en: "Start automatically when you log in. With the tray enabled it stays in the tray and doesn't open the window."
+  zh-CN: "登录系统后自动启动。启用托盘时只驻留在托盘里，不弹出主窗口。"
+settings_close_to_tray:
+  en: "Keep running in the tray"
+  zh-CN: "关闭窗口后驻留托盘"
+settings_close_to_tray_hint:
+  en: "Closing the window keeps live monitoring running in the background."
+  zh-CN: "关闭窗口后继续在后台监控。"
+settings_export_section:
+  en: "Export"
+  zh-CN: "导出"
+settings_export_sensitive:
+  en: "Include sensitive data"
+  zh-CN: "导出包含敏感信息"
+settings_export_sensitive_hint:
+  en: "MAC, serial numbers, BIOS serial, env keys. Off by default."
+  zh-CN: "MAC、序列号、BIOS 序列号、环境变量名等。默认关闭。"
+settings_floating_net:
+  en: "Net speed widget"
+  zh-CN: "网速悬浮窗"
+settings_floating_net_hint:
+  en: "A small always-on-top bar with live download and upload speed. Drag to move, double-click to close."
+  zh-CN: "始终置顶的小条，显示实时下载和上传速度。可拖动，双击关闭。"
+settings_floating_section:
+  en: "Desktop widgets"
+  zh-CN: "桌面悬浮窗"
+settings_geek:
+  en: "Geek mode"
+  zh-CN: "极客模式"
+settings_geek_hint:
+  en: "Expand CPUID, instruction sets, PCIe topology and more"
+  zh-CN: "展开 CPUID、指令集、PCIe 拓扑等高级面板"
+settings_interval:
+  en: "Sample interval"
+  zh-CN: "采样间隔"
+settings_interval_hint:
+  en: "Lower values are smoother but use more CPU"
+  zh-CN: "较低值更平滑，但占用更高"
+settings_language:
+  en: "Language"
+  zh-CN: "语言"
+settings_language_hint:
+  en: "Interface language"
+  zh-CN: "界面语言（自动同步所有页面）"
+settings_monitor:
+  en: "Real-time monitor"
+  zh-CN: "实时监控"
+settings_page_network:
+  en: "Network and API"
+  zh-CN: "网络与接口"
+settings_public_ip_clear:
+  en: "Clear"
+  zh-CN: "清除"
+settings_public_ip_fetch:
+  en: "Fetch now"
+  zh-CN: "立即获取"
+settings_public_ip_hint:
+  en: "Looks up the public IP over the network when you ask (off by default)"
+  zh-CN: "仅在你主动查询时联网获取公网 IP（默认关闭）"
+settings_server:
+  en: "Local HTTP API"
+  zh-CN: "本地 HTTP 接口"
+settings_server_failed:
+  en: "Failed: %{error}"
+  zh-CN: "启动失败：%{error}"
+settings_server_hint:
+  en: "Serves snapshots and live metrics as JSON for scripts and dashboards."
+  zh-CN: "以 JSON 提供快照与实时指标，方便脚本和看板调用。"
+settings_server_lan:
+  en: "Allow LAN access"
+  zh-CN: "允许局域网访问"
+settings_server_lan_hint:
+  en: "Listen on every network interface instead of this device only."
+  zh-CN: "监听所有网卡，而不仅限本机访问。"
+settings_server_listening:
+  en: "Listening on %{addr}"
+  zh-CN: "正在监听 %{addr}"
+settings_server_off:
+  en: "Off"
+  zh-CN: "已关闭"
+settings_server_starting:
+  en: "Starting…"
+  zh-CN: "启动中…"
+settings_server_status:
+  en: "Status"
+  zh-CN: "状态"
+settings_theme:
+  en: "Theme"
+  zh-CN: "主题"
+settings_theme_dark:
+  en: "Dark"
+  zh-CN: "深色"
+settings_theme_light:
+  en: "Light"
+  zh-CN: "浅色"
+settings_theme_system:
+  en: "Follow system"
+  zh-CN: "跟随系统"
+settings_title:
+  en: "Settings"
+  zh-CN: "设置"
+settings_tray_enabled:
+  en: "Show tray icon"
+  zh-CN: "显示托盘图标"
+settings_tray_enabled_hint:
+  en: "Live metrics and quick actions in the system tray."
+  zh-CN: "在系统托盘中查看实时指标并快速操作。"
+settings_tray_section:
+  en: "System tray"
+  zh-CN: "系统托盘"
+settings_unit_bits_s:
+  en: "Bits per second (Mbps)"
+  zh-CN: "比特每秒 (Mbps)"
+settings_unit_bytes_s:
+  en: "Bytes per second (MB/s)"
+  zh-CN: "字节每秒 (MB/s)"
+settings_unit_c:
+  en: "Celsius (°C)"
+  zh-CN: "摄氏度 (°C)"
+settings_unit_f:
+  en: "Fahrenheit (°F)"
+  zh-CN: "华氏度 (°F)"
+settings_unit_gb:
+  en: "Decimal (GB)"
+  zh-CN: "十进制 (GB)"
+settings_unit_gib:
+  en: "Binary (GiB)"
+  zh-CN: "二进制 (GiB)"
+settings_units:
+  en: "Units"
+  zh-CN: "单位"
+settings_units_bytes:
+  en: "Storage size"
+  zh-CN: "存储容量"
+settings_units_netspeed:
+  en: "Network speed"
+  zh-CN: "网速"
+settings_units_temp:
+  en: "Temperature"
+  zh-CN: "温度"
+settings_window:
+  en: "History window"
+  zh-CN: "历史窗口"
+settings_window_hint:
+  en: "How much history the live charts keep."
+  zh-CN: "实时图表保留的历史时长。"
+spec_arch:
+  en: "Architecture"
+  zh-CN: "架构"
+spec_available:
+  en: "Available"
+  zh-CN: "可用"
+spec_backend:
+  en: "Backend"
+  zh-CN: "后端"
+spec_boot_time:
+  en: "Boot time"
+  zh-CN: "开机时间"
+spec_brand:
+  en: "Model"
+  zh-CN: "型号"
+spec_cores:
+  en: "Cores"
+  zh-CN: "核心数"
+spec_desktop:
+  en: "Desktop"
+  zh-CN: "桌面环境"
+spec_driver:
+  en: "Driver"
+  zh-CN: "驱动"
+spec_filesystem:
+  en: "Filesystem"
+  zh-CN: "文件系统"
+spec_freq:
+  en: "Frequency"
+  zh-CN: "频率"
+spec_freq_max:
+  en: "Max frequency"
+  zh-CN: "最大频率"
+spec_hostname:
+  en: "Hostname"
+  zh-CN: "主机名"
+spec_kernel:
+  en: "Kernel"
+  zh-CN: "内核"
+spec_kind:
+  en: "Type"
+  zh-CN: "类型"
+spec_link_speed:
+  en: "Link speed"
+  zh-CN: "链路速率"
+spec_locale:
+  en: "Locale"
+  zh-CN: "区域"
+spec_mac:
+  en: "MAC"
+  zh-CN: "MAC 地址"
+spec_mount:
+  en: "Mount"
+  zh-CN: "挂载点"
+spec_pcie:
+  en: "PCIe"
+  zh-CN: "PCIe"
+spec_refresh:
+  en: "Refresh"
+  zh-CN: "刷新率"
+spec_resolution:
+  en: "Resolution"
+  zh-CN: "分辨率"
+spec_serial:
+  en: "Serial number"
+  zh-CN: "序列号"
+spec_shell:
+  en: "Shell"
+  zh-CN: "Shell"
+spec_status:
+  en: "Status"
+  zh-CN: "状态"
+spec_temp:
+  en: "Temperature"
+  zh-CN: "温度"
+spec_total:
+  en: "Total"
+  zh-CN: "总量"
+spec_uptime:
+  en: "Uptime"
+  zh-CN: "运行时长"
+spec_used:
+  en: "Used"
+  zh-CN: "已用"
+spec_user:
+  en: "User"
+  zh-CN: "用户"
+spec_vendor:
+  en: "Vendor"
+  zh-CN: "厂商"
+storage_no_disks:
+  en: "No disks detected"
+  zh-CN: "未检测到磁盘"
+storage_smart_failing:
+  en: "SMART failing"
+  zh-CN: "SMART 警告"
+storage_smart_ok:
+  en: "SMART OK"
+  zh-CN: "SMART OK"
+tray_quit:
+  en: "Quit"
+  zh-CN: "退出"
+tray_show:
+  en: "Show window"
+  zh-CN: "显示窗口"
+unit_minutes:
+  en: "%{n} min"
+  zh-CN: "%{n} 分钟"
+bar_title:
+  en: "Menu bar"
+  zh-CN: "顶栏监控"
+bar_description:
+  en: "Choose what the menu bar shows. Click any item to open its live panel."
+  zh-CN: "自定义顶栏展示的内容，点击任意监控项即可展开对应的实时面板。"
+bar_preview:
+  en: "Live preview"
+  zh-CN: "实时预览"
+bar_preview_hint:
+  en: "Live readings. Changes apply instantly and are saved automatically."
+  zh-CN: "使用实时读数，修改即时生效并自动保存。"
+bar_general:
+  en: "Display & behavior"
+  zh-CN: "显示与交互"
+bar_system:
+  en: "Show in system menu bar"
+  zh-CN: "显示系统顶栏监控项"
+bar_system_mac:
+  en: "Needs the system tray. Click an item to open its panel; right-click for app actions. macOS decides how much room the menu bar has."
+  zh-CN: "需要开启系统托盘。点击任意监控项展开对应面板，右键显示应用菜单。可用空间由 macOS 决定。"
+bar_system_other:
+  en: "Metrics are listed in the system tray menu; pick one to open its panel."
+  zh-CN: "指标会列在系统托盘菜单里，选择任意一项即可展开对应面板。"
+bar_labels:
+  en: "Show metric labels"
+  zh-CN: "显示指标简称"
+bar_separators:
+  en: "Show separators"
+  zh-CN: "显示分隔线"
+bar_colorful:
+  en: "Use metric colors"
+  zh-CN: "使用指标彩色显示"
+bar_refresh:
+  en: "Menu bar refresh interval"
+  zh-CN: "系统顶栏刷新间隔"
+bar_process_count:
+  en: "Processes shown in detail panels"
+  zh-CN: "详情面板进程排行条数"
+bar_items:
+  en: "Metrics · order & appearance"
+  zh-CN: "监控项 · 顺序与样式"
+bar_stacked:
+  en: "Stacked"
+  zh-CN: "双行"
+bar_graph:
+  en: "Trend"
+  zh-CN: "趋势"
+bar_reset:
+  en: "Restore defaults"
+  zh-CN: "恢复默认"
+bar_no_items:
+  en: "Enable a metric below to build your strip."
+  zh-CN: "在下方开启监控项，组成你的监控条。"
+bar_top_processes:
+  en: "Top processes"
+  zh-CN: "进程排行"
+bar_download:
+  en: "Download"
+  zh-CN: "下载"
+bar_upload:
+  en: "Upload"
+  zh-CN: "上传"
+bar_no_sensor:
+  en: "Temperature readings are unavailable on this device."
+  zh-CN: "此设备暂不支持温度读数。"
+bar_unavailable:
+  en: "No readings available for this hardware."
+  zh-CN: "此硬件暂无可用读数。"
+bar_pin:
+  en: "Pin panel · keep open when clicking elsewhere"
+  zh-CN: "固定面板 · 点击其他位置时保持显示"
+bar_open_detail:
+  en: "Full details"
+  zh-CN: "完整详情"
+bar_configure:
+  en: "Configure menu bar"
+  zh-CN: "配置监控条"
+bar_units:
+  en: "Show units"
+  zh-CN: "显示单位"
+bar_inline:
+  en: "Inline"
+  zh-CN: "单行"
+bar_style:
+  en: "Style"
+  zh-CN: "样式"
+bar_content:
+  en: "Shows"
+  zh-CN: "显示内容"
+bar_all:
+  en: "All"
+  zh-CN: "全部"
+bar_details:
+  en: "Details"
+  zh-CN: "详情"
+bar_now:
+  en: "Now"
+  zh-CN: "现在"
+bar_max:
+  en: "Max"
+  zh-CN: "最高"
+bar_sensors:
+  en: "Temperature sensors"
+  zh-CN: "温度传感器"
+bar_sensor_count:
+  en: "%{n} temperature sensors"
+  zh-CN: "%{n} 个温度传感器"
+bar_volumes:
+  en: "Volumes"
+  zh-CN: "磁盘卷"
+bar_read:
+  en: "Read"
+  zh-CN: "读取"
+bar_write:
+  en: "Write"
+  zh-CN: "写入"
+bar_core_count:
+  en: "%{cores} cores · %{threads} threads"
+  zh-CN: "%{cores} 核 · %{threads} 线程"
+bar_free_of:
+  en: "%{free} free of %{total}"
+  zh-CN: "可用 %{free} / 共 %{total}"
+bar_show_usage:
+  en: "Usage"
+  zh-CN: "占用率"
+bar_show_used:
+  en: "Used"
+  zh-CN: "已用量"
+bar_show_free:
+  en: "Free"
+  zh-CN: "可用量"
+bar_show_io:
+  en: "Read / write speed"
+  zh-CN: "读写速度"
+bar_show_both:
+  en: "Download & upload"
+  zh-CN: "下载与上传"
+bar_show_level:
+  en: "Charge level"
+  zh-CN: "电量"
+bar_show_remaining:
+  en: "Time left"
+  zh-CN: "剩余时间"
+bar_show_cpu_temp:
+  en: "CPU / SoC temperature"
+  zh-CN: "CPU / SoC 温度"
+bar_show_hottest:
+  en: "Hottest sensor"
+  zh-CN: "最高温度"
+bar_core_hybrid:
+  en: "%{p}P + %{e}E cores · %{threads} threads"
+  zh-CN: "%{p} 性能核 + %{e} 能效核 · %{threads} 线程"
+bar_avg_peak:
+  en: "Avg %{avg} · Peak %{peak}"
+  zh-CN: "平均 %{avg} · 峰值 %{peak}"
+bar_ago:
+  en: "%{span} ago"
+  zh-CN: "%{span}前"
+bar_all_count:
+  en: "All %{n}"
+  zh-CN: "全部 %{n}"
+unit_seconds:
+  en: "%{n} s"
+  zh-CN: "%{n} 秒"
+net_kind_wifi:
+  en: "Wi-Fi"
+  zh-CN: "Wi-Fi"
+net_kind_ethernet:
+  en: "Ethernet"
+  zh-CN: "以太网"
+net_kind_bluetooth:
+  en: "Bluetooth"
+  zh-CN: "蓝牙"
+net_kind_virtual:
+  en: "Virtual / VPN"
+  zh-CN: "虚拟 / VPN"
+bar_spacing:
+  en: "Item spacing"
+  zh-CN: "监控项间距"
+bar_spacing_hint:
+  en: "Space between two items in the menu bar. macOS adds its own small margin on top."
+  zh-CN: "相邻两个监控项之间的留白，macOS 自己还会额外加一点点边距。"
+bar_show_icon:
+  en: "Show app icon"
+  zh-CN: "显示应用图标"
+bar_show_icon_hint:
+  en: "Turn off to make the strip shorter. The icon stays whenever no item is shown, and the app menu is one right-click on any item away."
+  zh-CN: "关掉可以让监控条更短。没有监控项时图标会自动保留，右键任意监控项也能打开应用菜单。"
+menu_settings:
+  en: "Settings…"
+  zh-CN: "设置…"
+menu_window:
+  en: "Window"
+  zh-CN: "窗口"
+menu_minimize:
+  en: "Minimize"
+  zh-CN: "最小化"
+menu_zoom:
+  en: "Zoom"
+  zh-CN: "缩放"
+menu_close:
+  en: "Close Window"
+  zh-CN: "关闭窗口"

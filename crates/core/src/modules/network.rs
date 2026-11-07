@@ -1,66 +1,70 @@
 use crate::model::{NetworkInfo, NetworkInterface};
-use crate::state::SharedSys;
-use std::sync::Arc;
+#[cfg(unix)]
+use crate::util::run_stdout_timeout;
+use std::time::Duration;
+use sysinfo::{InterfaceOperationalState, Networks};
 
-/// 注意：每接口的 rx_bytes_per_sec / tx_bytes_per_sec 字段并非真正的"每秒字节数"，
-/// 而是 sysinfo 在两次 refresh 之间累积的 delta。其精度依赖于外部 refresh 节奏：
-/// 当 Monitor 任务在 1Hz 运行时，该值 ~ 1s 内的字节差，可作为瞬时速率近似；
-/// 当 Monitor 未启动时该值是「自上次 refresh 以来」的累积，不应当作 BPS 解读。
-/// 真正的实时速率由 MonitorTick.net_rx_bps/net_tx_bps 提供（聚合所有接口）。
-pub fn collect(shared: &Arc<SharedSys>) -> NetworkInfo {
-    let nets = shared.networks.lock();
+/// 网卡清单。
+///
+/// `rx_bytes_per_sec` / `tx_bytes_per_sec` 在快照里恒为 0：速率必须由两次采样相除得到，
+/// 请使用 `monitor::Sampler` 产出的 `MonitorTick.per_interface`。
+pub fn collect() -> NetworkInfo {
     let mut interfaces: Vec<NetworkInterface> = Vec::new();
 
-    let up_set = read_up_interfaces();
+    if let Ok(nets) = Networks::new_with_refreshed_list() {
+        let hints = port_hints();
+        for (name, data) in nets.iter() {
+            let name = name.to_string_lossy().to_string();
 
-    for (name, data) in nets.iter() {
-        let mac = {
-            let s = data.mac_address().to_string();
-            if s == "00:00:00:00:00:00" || s.is_empty() {
-                None
-            } else {
-                Some(s)
+            let mac = Some(data.mac_address())
+                .filter(|m| !m.is_unspecified())
+                .map(|m| m.to_string());
+            let mut ipv4 = Vec::new();
+            let mut ipv6 = Vec::new();
+            for ip in data.ip_networks() {
+                match ip.addr {
+                    std::net::IpAddr::V4(v4) => ipv4.push(v4.to_string()),
+                    std::net::IpAddr::V6(v6) => ipv6.push(v6.to_string()),
+                }
             }
-        };
-        let mut ipv4 = Vec::new();
-        let mut ipv6 = Vec::new();
-        for ip in data.ip_networks() {
-            match ip.addr {
-                std::net::IpAddr::V4(v4) => ipv4.push(v4.to_string()),
-                std::net::IpAddr::V6(v6) => ipv6.push(v6.to_string()),
-            }
+
+            let kind = classify_interface(&name, hints.get(&name).map(String::as_str));
+            let is_loopback = kind == "loopback";
+            // 物理层可达且至少有一个地址才算"在线"；操作系统给不出状态时按地址兜底。
+            let has_ip = !ipv4.is_empty() || !ipv6.is_empty();
+            let is_up = is_loopback
+                || match data.operational_state() {
+                    InterfaceOperationalState::Down
+                    | InterfaceOperationalState::NotPresent
+                    | InterfaceOperationalState::Dormant
+                    | InterfaceOperationalState::Testing => false,
+                    _ => has_ip,
+                };
+
+            interfaces.push(NetworkInterface {
+                link_speed_mbps: data
+                    .receive_link_speed()
+                    .or_else(|| data.transmit_link_speed())
+                    .map(|bps| bps / 1_000_000)
+                    .filter(|v| *v > 0),
+                name,
+                mac,
+                ipv4,
+                ipv6,
+                is_up,
+                is_loopback,
+                kind: kind.to_string(),
+                rx_bytes_per_sec: 0,
+                tx_bytes_per_sec: 0,
+                rx_total_bytes: data.total_received(),
+                tx_total_bytes: data.total_transmitted(),
+            });
         }
-        let kind = classify_interface(name);
-        let is_loopback = kind == "loopback";
-        let is_up = if is_loopback {
-            true
-        } else if let Some(set) = up_set.as_ref() {
-            set.iter().any(|s| s.eq_ignore_ascii_case(name))
-        } else {
-            !ipv4.is_empty() || !ipv6.is_empty()
-        };
-
-        interfaces.push(NetworkInterface {
-            name: name.to_string(),
-            mac,
-            ipv4,
-            ipv6,
-            is_up,
-            is_loopback,
-            kind,
-            link_speed_mbps: read_link_speed(name),
-            rx_bytes_per_sec: data.received(),
-            tx_bytes_per_sec: data.transmitted(),
-            rx_total_bytes: data.total_received(),
-            tx_total_bytes: data.total_transmitted(),
-        });
     }
-
     interfaces.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut dns_servers = read_dns_servers();
     sanitize_dns(&mut dns_servers);
-
     NetworkInfo {
         interfaces,
         public_ip: None,
@@ -69,198 +73,143 @@ pub fn collect(shared: &Arc<SharedSys>) -> NetworkInfo {
     }
 }
 
-fn classify_interface(name: &str) -> String {
+/// macOS 的 `networksetup` 能准确说出每个 enN 是 Wi-Fi 还是以太网；其他平台没有该来源。
+#[cfg(target_os = "macos")]
+fn port_hints() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let Some(text) = run_stdout_timeout(
+        "/usr/sbin/networksetup",
+        &["-listallhardwareports"],
+        Duration::from_secs(3),
+    ) else {
+        return map;
+    };
+    let mut port: Option<String> = None;
+    for line in text.lines() {
+        if let Some(p) = line.strip_prefix("Hardware Port:") {
+            port = Some(p.trim().to_string());
+        } else if let Some(d) = line.strip_prefix("Device:")
+            && let Some(p) = port.take()
+        {
+            map.insert(d.trim().to_string(), p);
+        }
+    }
+    map
+}
+
+#[cfg(not(target_os = "macos"))]
+fn port_hints() -> std::collections::HashMap<String, String> {
+    std::collections::HashMap::new()
+}
+
+pub(crate) fn classify_interface(name: &str, hint: Option<&str>) -> &'static str {
     let lower = name.to_lowercase();
-    // Loopback
     if lower == "lo" || lower == "lo0" || lower.starts_with("loopback") {
-        return "loopback".to_string();
+        return "loopback";
     }
-    // Bluetooth (must be before generic "bt")
+    if let Some(h) = hint {
+        let h = h.to_lowercase();
+        if h.contains("wi-fi") || h.contains("wifi") || h.contains("airport") {
+            return "wifi";
+        }
+        if h.contains("bluetooth") {
+            return "bluetooth";
+        }
+        if h.contains("thunderbolt bridge") || h.contains("iphone") || h.contains("ipad") {
+            return "virtual";
+        }
+        if h.contains("ethernet") || h.contains("lan") {
+            return "ethernet";
+        }
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(k) = linux_kind(name) {
+        return k;
+    }
     if lower.contains("bluetooth") || lower.starts_with("pan") {
-        return "bluetooth".to_string();
+        return "bluetooth";
     }
-    // Apple 私有：AWDL（AirDrop）/ LLW（Low-Latency WLAN）/ AP（Internet Sharing）
-    // GIF/STF（IPv6 over IPv4 隧道）/ XHC（Thunderbolt）
-    if lower.starts_with("awdl")
-        || lower.starts_with("llw")
-        || lower.starts_with("ap1")
-        || lower.starts_with("gif")
-        || lower.starts_with("stf")
-        || lower.starts_with("anpi")
-        || lower.starts_with("xhc")
-    {
-        return "virtual".to_string();
-    }
-    // VPN / 隧道 / 容器 / 桥
-    if lower.starts_with("utun")
-        || lower.starts_with("tun")
-        || lower.starts_with("tap")
-        || lower.starts_with("wg")
-        || lower.starts_with("ipsec")
-        || lower.starts_with("ppp")
-        || lower.starts_with("docker")
-        || lower.starts_with("br-")
+    // Apple 私有接口（AirDrop / 低延迟 WLAN / 共享 / IPv6 隧道 / Thunderbolt）、
+    // VPN / 隧道 / 容器 / 虚拟交换机。
+    const VIRTUAL_PREFIXES: [&str; 23] = [
+        "awdl",
+        "llw",
+        "ap1",
+        "gif",
+        "stf",
+        "anpi",
+        "xhc",
+        "utun",
+        "tun",
+        "tap",
+        "wg",
+        "ipsec",
+        "ppp",
+        "docker",
+        "br-",
+        "veth",
+        "vmnet",
+        "vmenet",
+        "vboxnet",
+        "zt",
+        "tailscale",
+        "bridge",
+        "vethernet",
+    ];
+    if VIRTUAL_PREFIXES.iter().any(|p| lower.starts_with(p))
         || lower == "br0"
-        || lower.starts_with("veth")
-        || lower.starts_with("vmnet")
-        || lower.starts_with("vboxnet")
-        || lower.starts_with("zt")
-        || lower.starts_with("tailscale")
+        || lower.contains("vmware")
+        || lower.contains("virtualbox")
+        || lower.contains("hyper-v")
+        || lower.contains("wsl")
+        || lower.contains("local area connection*")
     {
-        return "virtual".to_string();
+        return "virtual";
     }
-    // Wi-Fi（系统默认 / systemd predictable / Windows）
     if lower.starts_with("wl")
-        || lower.starts_with("wlp")
-        || lower.starts_with("wlx")
         || lower.contains("wi-fi")
         || lower.contains("wifi")
         || lower.contains("wlan")
-        || lower.starts_with("wifi")
     {
-        return "wifi".to_string();
+        return "wifi";
     }
-    // 以太网（包含 systemd predictable enp/enx）
     if lower.starts_with("en")
         || lower.starts_with("eth")
-        || lower.starts_with("eno")
-        || lower.starts_with("enp")
-        || lower.starts_with("enx")
         || lower.contains("ethernet")
         || lower.contains("以太网")
     {
-        return "ethernet".to_string();
+        return "ethernet";
     }
-    "other".to_string()
+    "other"
+}
+
+/// Linux：sysfs 能给出权威答案——有 `wireless` 目录就是 Wi-Fi，
+/// 位于 `/sys/devices/virtual/net` 下的都是软件创建的虚拟接口。
+#[cfg(target_os = "linux")]
+fn linux_kind(name: &str) -> Option<&'static str> {
+    let base = std::path::Path::new("/sys/class/net").join(name);
+    if base.join("wireless").exists() || base.join("phy80211").exists() {
+        return Some("wifi");
+    }
+    let real = std::fs::canonicalize(&base).ok()?;
+    if real.starts_with("/sys/devices/virtual/") {
+        return Some("virtual");
+    }
+    None
 }
 
 fn sanitize_dns(servers: &mut Vec<String>) {
     let bad = ["127.0.0.1", "127.0.0.53", "0.0.0.0", "::1"];
-    servers.retain(|s| !bad.contains(&s.as_str()) && !s.is_empty());
+    servers.retain(|s| !s.is_empty() && !bad.contains(&s.as_str()));
     let mut seen = std::collections::HashSet::new();
     servers.retain(|s| seen.insert(s.clone()));
 }
 
-#[cfg(target_os = "linux")]
-fn read_up_interfaces() -> Option<Vec<String>> {
-    let mut out = Vec::new();
-    let entries = std::fs::read_dir("/sys/class/net").ok()?;
-    for e in entries.flatten() {
-        let name = e.file_name().to_string_lossy().to_string();
-        let path = e.path().join("operstate");
-        if let Ok(state) = std::fs::read_to_string(&path) {
-            let st = state.trim();
-            if st == "up" || st == "unknown" {
-                out.push(name);
-            }
-        }
-    }
-    Some(out)
-}
-
-#[cfg(target_os = "macos")]
-fn read_up_interfaces() -> Option<Vec<String>> {
-    // 在 macOS 上 sysinfo 没法告诉我们物理 link 状态，仅有 IP 地址。
-    // 拔了网线后 en0 可能仍保留旧 IP，所以单看 ipv4.is_empty() 会误报 up。
-    // ifconfig 输出含 "status: active" / "status: inactive" 行，是最权威的信号。
-    let out = std::process::Command::new("ifconfig").output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout);
-    let mut up: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
-    let mut current_active = false;
-    let mut has_status_line = false;
-    let flush = |current: &mut Option<String>,
-                 active: bool,
-                 has_status: bool,
-                 up: &mut Vec<String>| {
-        if let Some(name) = current.take() {
-            if active {
-                up.push(name);
-            } else if !has_status {
-                // 没有 status 行的接口（loopback / utun / awdl 之类），
-                // 默认视为 up 让 collect() 的 ipv4 fallback 决定。
-                up.push(name);
-            }
-        }
-    };
-    for line in s.lines() {
-        if !line.starts_with('\t') && !line.starts_with(' ') {
-            // 新接口块: "en0: flags=8863<UP,BROADCAST,SMART,...>"
-            flush(&mut current, current_active, has_status_line, &mut up);
-            current_active = false;
-            has_status_line = false;
-            if let Some((name, _)) = line.split_once(':') {
-                current = Some(name.trim().to_string());
-            }
-            continue;
-        }
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("status:") {
-            has_status_line = true;
-            current_active = rest.trim().eq_ignore_ascii_case("active");
-        }
-    }
-    flush(&mut current, current_active, has_status_line, &mut up);
-    Some(up)
-}
-
-#[cfg(target_os = "windows")]
-fn read_up_interfaces() -> Option<Vec<String>> {
-    use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
-
-    #[derive(Deserialize, Debug)]
-    #[serde(rename_all = "PascalCase")]
-    struct Adapter {
-        name: Option<String>,
-        net_connection_status: Option<u16>,
-    }
-    let com = COMLibrary::new().ok()?;
-    let conn = WMIConnection::new(com).ok()?;
-    // NetConnectionStatus 文档值：
-    //   2 = Connected, 7 = Media Disconnected, 9 = Authentication Succeeded, ...
-    let rows: Vec<Adapter> = conn
-        .raw_query("SELECT Name, NetConnectionStatus FROM Win32_NetworkAdapter")
-        .ok()?;
-    Some(
-        rows.into_iter()
-            .filter_map(|a| {
-                let connected = matches!(a.net_connection_status, Some(2) | Some(9));
-                if connected { a.name } else { None }
-            })
-            .collect(),
-    )
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn read_up_interfaces() -> Option<Vec<String>> {
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn read_link_speed(name: &str) -> Option<u64> {
-    let p = format!("/sys/class/net/{name}/speed");
-    std::fs::read_to_string(p)
-        .ok()
-        .and_then(|s| s.trim().parse::<i64>().ok())
-        .and_then(|v| if v <= 0 { None } else { Some(v as u64) })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_link_speed(_name: &str) -> Option<u64> {
-    None
-}
+// ---------------------------------------------------------------- 默认网关
 
 #[cfg(target_os = "linux")]
 fn read_default_gateway() -> Option<String> {
-    if let Some(v4) = read_default_gateway_v4() {
-        return Some(v4);
-    }
-    // 纯 IPv6 网络（如某些 VPS/容器）：解析 /proc/net/ipv6_route。
-    read_default_gateway_v6()
+    read_default_gateway_v4().or_else(read_default_gateway_v6)
 }
 
 #[cfg(target_os = "linux")]
@@ -268,151 +217,101 @@ fn read_default_gateway_v4() -> Option<String> {
     let content = std::fs::read_to_string("/proc/net/route").ok()?;
     for line in content.lines().skip(1) {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 8 {
+        if cols.len() < 8 || cols[1] != "00000000" {
             continue;
         }
-        if cols[1] == "00000000" {
-            let gw_hex = cols[2];
-            if gw_hex.len() == 8 {
-                let bytes = (0..4)
-                    .filter_map(|i| u8::from_str_radix(&gw_hex[i * 2..i * 2 + 2], 16).ok())
-                    .collect::<Vec<_>>();
-                if bytes.len() == 4 {
-                    return Some(format!("{}.{}.{}.{}", bytes[3], bytes[2], bytes[1], bytes[0]));
-                }
-            }
+        // 小端十六进制，例如 0101A8C0 → 192.168.1.1
+        let gw = u32::from_str_radix(cols[2], 16).ok()?;
+        if gw != 0 {
+            return Some(std::net::Ipv4Addr::from(gw.swap_bytes()).to_string());
         }
     }
     None
 }
 
+/// 纯 IPv6 网络（部分 VPS / 容器）：解析 /proc/net/ipv6_route。
+/// 每行：dest_prefix dest_len src_prefix src_len next_hop metric refcnt usecnt flags iface
 #[cfg(target_os = "linux")]
 fn read_default_gateway_v6() -> Option<String> {
-    // /proc/net/ipv6_route 每行格式：
-    // dest_prefix dest_prefix_len src_prefix src_prefix_len next_hop metric refcount usecount flags iface
-    // 默认路由特征：dest_prefix == "00000000000000000000000000000000" 且 prefix_len == 0
+    const ZERO: &str = "00000000000000000000000000000000";
     let content = std::fs::read_to_string("/proc/net/ipv6_route").ok()?;
     for line in content.lines() {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 10 {
+        if cols.len() < 10 || cols[0] != ZERO || cols[1] != "00" || cols[4] == ZERO {
             continue;
         }
-        if cols[0] == "00000000000000000000000000000000" && cols[1] == "00" {
-            let next_hop = cols[4];
-            if next_hop == "00000000000000000000000000000000" {
-                continue; // 链路本地或未指定
-            }
-            return parse_hex_ipv6(next_hop);
-        }
+        let bits = u128::from_str_radix(cols[4], 16).ok()?;
+        return Some(std::net::Ipv6Addr::from(bits).to_string());
     }
     None
-}
-
-#[cfg(target_os = "linux")]
-fn parse_hex_ipv6(hex: &str) -> Option<String> {
-    if hex.len() != 32 {
-        return None;
-    }
-    let groups: Vec<String> = (0..8)
-        .map(|i| {
-            let part = &hex[i * 4..i * 4 + 4];
-            // 每 4 个 hex char = 16 bit big-endian
-            u16::from_str_radix(part, 16)
-                .map(|v| format!("{v:x}"))
-                .unwrap_or_else(|_| "0".into())
-        })
-        .collect();
-    let raw = groups.join(":");
-    // 解析后再用 std::net 规范化（处理 ::）
-    raw.parse::<std::net::Ipv6Addr>()
-        .map(|a| a.to_string())
-        .ok()
 }
 
 #[cfg(target_os = "macos")]
 fn read_default_gateway() -> Option<String> {
-    let out = std::process::Command::new("route")
-        .args(["-n", "get", "default"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout);
-    for line in s.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("gateway:") {
-            let v = rest.trim();
-            if !v.is_empty() {
-                return Some(v.to_string());
-            }
-        }
-    }
-    None
+    let text = run_stdout_timeout(
+        "/sbin/route",
+        &["-n", "get", "default"],
+        Duration::from_secs(3),
+    )?;
+    text.lines().find_map(|l| {
+        let v = l.trim().strip_prefix("gateway:")?.trim();
+        (!v.is_empty()).then(|| v.to_string())
+    })
 }
 
 #[cfg(target_os = "windows")]
 fn read_default_gateway() -> Option<String> {
-    use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
-
-    #[derive(Deserialize, Debug)]
+    #[derive(serde::Deserialize, Debug)]
     #[serde(rename_all = "PascalCase")]
     struct Cfg {
+        #[serde(rename = "DefaultIPGateway")]
         default_ip_gateway: Option<Vec<String>>,
-        ip_enabled: Option<bool>,
     }
-    let com = COMLibrary::new().ok()?;
-    let conn = WMIConnection::new(com).ok()?;
+    let conn = crate::platform::windows::wmi_cimv2()?;
     let rows: Vec<Cfg> = conn
         .raw_query(
-            "SELECT DefaultIPGateway, IPEnabled FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE",
+            "SELECT DefaultIPGateway FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE",
         )
         .ok()?;
     rows.into_iter()
-        .filter(|r| r.ip_enabled.unwrap_or(false))
         .find_map(|r| r.default_ip_gateway.and_then(|v| v.into_iter().next()))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn read_default_gateway() -> Option<String> {
-    None
-}
+// --------------------------------------------------------------------- DNS
 
 #[cfg(target_os = "linux")]
 fn read_dns_servers() -> Vec<String> {
     let primary = read_resolv_conf();
-    if !primary.is_empty()
-        && !primary.iter().all(|s| s.starts_with("127.0.0.") || s == "::1")
-    {
+    let stub_only = primary.iter().all(|s| s.starts_with("127.") || s == "::1");
+    if !primary.is_empty() && !stub_only {
         return primary;
     }
-    // systemd-resolved 桩——尝试 resolvectl
+    // systemd-resolved 的桩地址：问 resolvectl 拿真实上游。
     let resolved = read_resolvectl();
-    if !resolved.is_empty() {
-        return resolved;
+    if resolved.is_empty() {
+        primary
+    } else {
+        resolved
     }
-    primary
 }
 
 #[cfg(target_os = "linux")]
 fn read_resolvectl() -> Vec<String> {
-    let out = match std::process::Command::new("resolvectl").arg("status").output() {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    let Some(text) = run_stdout_timeout("resolvectl", &["status"], Duration::from_secs(3)) else {
+        return Vec::new();
     };
-    let s = String::from_utf8_lossy(&out.stdout);
-    let mut servers = Vec::new();
-    for line in s.lines() {
+    let mut servers: Vec<String> = Vec::new();
+    for line in text.lines() {
         let line = line.trim();
-        if let Some(rest) = line
+        let Some(rest) = line
             .strip_prefix("Current DNS Server:")
             .or_else(|| line.strip_prefix("DNS Servers:"))
-        {
-            for tok in rest.split_whitespace() {
-                if tok.parse::<std::net::IpAddr>().is_ok() && !servers.contains(&tok.to_string()) {
-                    servers.push(tok.to_string());
-                }
+        else {
+            continue;
+        };
+        for tok in rest.split_whitespace() {
+            if tok.parse::<std::net::IpAddr>().is_ok() && !servers.iter().any(|s| s == tok) {
+                servers.push(tok.to_string());
             }
         }
     }
@@ -425,23 +324,19 @@ fn read_dns_servers() -> Vec<String> {
     if !primary.is_empty() {
         return primary;
     }
-    let out = match std::process::Command::new("scutil").arg("--dns").output() {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    let Some(text) = run_stdout_timeout("/usr/sbin/scutil", &["--dns"], Duration::from_secs(3))
+    else {
+        return Vec::new();
     };
-    let s = String::from_utf8_lossy(&out.stdout);
-    let mut servers = Vec::new();
-    for line in s.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.split_once(':').and_then(|(k, v)| {
-            if k.trim_start_matches(|c: char| !c.is_alphabetic()).starts_with("nameserver") {
-                Some(v.trim())
-            } else {
-                None
-            }
-        }) {
-            if rest.parse::<std::net::IpAddr>().is_ok() && !servers.contains(&rest.to_string()) {
-                servers.push(rest.to_string());
+    let mut servers: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
+        if k.trim().starts_with("nameserver") {
+            let v = v.trim();
+            if v.parse::<std::net::IpAddr>().is_ok() && !servers.iter().any(|s| s == v) {
+                servers.push(v.to_string());
             }
         }
     }
@@ -450,11 +345,10 @@ fn read_dns_servers() -> Vec<String> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_resolv_conf() -> Vec<String> {
-    let content = match std::fs::read_to_string("/etc/resolv.conf") {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let Ok(content) = std::fs::read_to_string("/etc/resolv.conf") else {
+        return Vec::new();
     };
-    let mut out = Vec::new();
+    let mut out: Vec<String> = Vec::new();
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with('#') {
@@ -462,7 +356,7 @@ fn read_resolv_conf() -> Vec<String> {
         }
         if let Some(rest) = line.strip_prefix("nameserver") {
             let v = rest.trim();
-            if !v.is_empty() && !out.iter().any(|s: &String| s == v) {
+            if !v.is_empty() && !out.iter().any(|s| s == v) {
                 out.push(v.to_string());
             }
         }
@@ -472,70 +366,57 @@ fn read_resolv_conf() -> Vec<String> {
 
 #[cfg(target_os = "windows")]
 fn read_dns_servers() -> Vec<String> {
-    use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
-
-    #[derive(Deserialize, Debug)]
+    #[derive(serde::Deserialize, Debug)]
     #[serde(rename_all = "PascalCase")]
     struct Cfg {
+        #[serde(rename = "DNSServerSearchOrder")]
         dns_server_search_order: Option<Vec<String>>,
-        ip_enabled: Option<bool>,
     }
-    let Ok(com) = COMLibrary::new() else { return Vec::new() };
-    let Ok(conn) = WMIConnection::new(com) else { return Vec::new() };
+    let Some(conn) = crate::platform::windows::wmi_cimv2() else {
+        return Vec::new();
+    };
     let rows: Vec<Cfg> = conn
         .raw_query(
-            "SELECT DNSServerSearchOrder, IPEnabled FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE",
+            "SELECT DNSServerSearchOrder FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE",
         )
         .unwrap_or_default();
     let mut out: Vec<String> = Vec::new();
-    for r in rows.into_iter().filter(|r| r.ip_enabled.unwrap_or(false)) {
-        if let Some(list) = r.dns_server_search_order {
-            for s in list {
-                if !s.is_empty() && !out.contains(&s) {
-                    out.push(s);
-                }
-            }
+    for s in rows
+        .into_iter()
+        .filter_map(|r| r.dns_server_search_order)
+        .flatten()
+    {
+        if !s.is_empty() && !out.contains(&s) {
+            out.push(s);
         }
     }
     out
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn read_dns_servers() -> Vec<String> {
-    Vec::new()
-}
+// ---------------------------------------------------------------- 公网 IP
 
-/// 查询公网 IP。仅当用户在设置中显式启用 publicIpEnabled 时才会被调用。
+/// 查询公网 IP。只有用户在设置里显式开启时才会被调用。
 ///
-/// - 使用 HTTPS（rustls），由 ureq 提供 TLS handshake；不再依赖系统 OpenSSL。
-/// - 多个备用域名（ipify / ifconfig.co / icanhazip），首个成功即返回。
-/// - 单个 endpoint 上限 ~3s；最坏情况 3 个 endpoint 全部 fail 时总耗时 ~9s。
+/// - HTTPS（rustls），不依赖系统 OpenSSL。
+/// - 多个备用端点，首个返回合法 IP 字面量的即采用，避免被 captive portal 注入的 HTML 污染。
+/// - 单个端点总超时 4 秒。
 pub fn fetch_public_ip() -> Option<String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(3))
-        .timeout_read(std::time::Duration::from_secs(3))
-        .timeout_write(std::time::Duration::from_secs(3))
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(4)))
         .user_agent(concat!("pc-specs/", env!("CARGO_PKG_VERSION")))
         .build();
-    let endpoints = [
+    let agent = ureq::Agent::new_with_config(config);
+    const ENDPOINTS: [&str; 3] = [
         "https://api.ipify.org",
         "https://ifconfig.co/ip",
         "https://icanhazip.com",
     ];
-    for url in endpoints {
-        match agent.get(url).call() {
-            Ok(resp) => {
-                if let Ok(body) = resp.into_string() {
-                    let trimmed = body.trim();
-                    // 简单校验：必须是 IPv4 或 IPv6 字面量，避免被 captive portal 注入 HTML。
-                    if trimmed.parse::<std::net::IpAddr>().is_ok() {
-                        return Some(trimmed.to_string());
-                    }
-                }
-            }
-            Err(_) => continue,
-        }
-    }
-    None
+    ENDPOINTS.iter().find_map(|url| {
+        let mut resp = agent.get(*url).call().ok()?;
+        let body = resp.body_mut().read_to_string().ok()?;
+        let ip = body.trim();
+        ip.parse::<std::net::IpAddr>()
+            .is_ok()
+            .then(|| ip.to_string())
+    })
 }

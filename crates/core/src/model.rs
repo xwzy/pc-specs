@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SystemSnapshot {
     pub timestamp: u64,
     pub host: HostInfo,
@@ -18,7 +18,35 @@ pub struct SystemSnapshot {
     pub dev_env: DevEnvInfo,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl SystemSnapshot {
+    /// 把一次实时采样里的"速率类"数据合入快照：磁盘 / 网卡 / GPU 的实时读数只有采样器能给。
+    pub fn merge_tick(&mut self, tick: &MonitorTick) {
+        for st in &mut self.storages {
+            let hit = tick
+                .per_disk
+                .iter()
+                .find(|d| st.mount_point.as_deref() == Some(d.mount_point.as_str()));
+            if let Some(d) = hit {
+                st.read_bytes_per_sec = d.read_bps;
+                st.write_bytes_per_sec = d.write_bps;
+            }
+        }
+        for n in &mut self.network.interfaces {
+            if let Some(t) = tick.per_interface.iter().find(|t| t.name == n.name) {
+                n.rx_bytes_per_sec = t.rx_bps;
+                n.tx_bytes_per_sec = t.tx_bps;
+            }
+        }
+        for g in &mut self.gpus {
+            if let Some(t) = tick.gpus.iter().find(|t| t.name == g.name) {
+                g.utilization = t.utilization.or(g.utilization);
+                g.vram_used_bytes = t.vram_used_bytes.or(g.vram_used_bytes);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostInfo {
     pub hostname: String,
     pub username: String,
@@ -27,7 +55,7 @@ pub struct HostInfo {
     pub app_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OsInfo {
     pub family: String,
     pub name: String,
@@ -39,7 +67,7 @@ pub struct OsInfo {
     pub desktop: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CpuInfo {
     pub vendor: String,
     pub brand: String,
@@ -60,7 +88,7 @@ pub struct CpuInfo {
     pub topology: Option<CpuTopology>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CpuTopology {
     pub sockets: u32,
     pub p_cores: Option<u32>,
@@ -68,13 +96,15 @@ pub struct CpuTopology {
     pub numa_nodes: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GpuInfo {
     pub index: u32,
     pub vendor: String,
     pub name: String,
+    /// 该平台的原生图形 API：Metal / Direct3D / Vulkan。
     pub backend: String,
     pub driver: Option<String>,
+    /// 独显为专用显存；Apple Silicon 等统一内存平台为 `None`。
     pub vram_total_bytes: Option<u64>,
     pub vram_used_bytes: Option<u64>,
     pub utilization: Option<f32>,
@@ -82,9 +112,12 @@ pub struct GpuInfo {
     pub power_w: Option<f32>,
     pub pcie_link: Option<String>,
     pub is_discrete: bool,
+    /// GPU 核心数（目前仅 Apple Silicon 可得）。
+    #[serde(default)]
+    pub cores: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryInfo {
     pub total_bytes: u64,
     pub used_bytes: u64,
@@ -94,7 +127,7 @@ pub struct MemoryInfo {
     pub modules: Vec<MemoryModule>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryModule {
     pub slot: String,
     pub manufacturer: Option<String>,
@@ -105,7 +138,7 @@ pub struct MemoryModule {
     pub form_factor: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StorageInfo {
     pub name: String,
     pub mount_point: Option<String>,
@@ -120,7 +153,7 @@ pub struct StorageInfo {
     pub serial: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MotherboardInfo {
     pub vendor: Option<String>,
     pub model: Option<String>,
@@ -132,7 +165,7 @@ pub struct MotherboardInfo {
     pub chassis: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NetworkInfo {
     pub interfaces: Vec<NetworkInterface>,
     pub public_ip: Option<String>,
@@ -140,7 +173,7 @@ pub struct NetworkInfo {
     pub dns_servers: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NetworkInterface {
     pub name: String,
     pub mac: Option<String>,
@@ -156,7 +189,7 @@ pub struct NetworkInterface {
     pub tx_total_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DisplayInfo {
     pub name: String,
     pub width_px: u32,
@@ -169,16 +202,17 @@ pub struct DisplayInfo {
     pub color_depth: Option<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SensorReading {
     pub source: String,
     pub label: String,
+    /// temperature / fan / voltage / current / power
     pub kind: String,
     pub value: f32,
     pub unit: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BatteryInfo {
     pub vendor: Option<String>,
     pub model: Option<String>,
@@ -194,7 +228,7 @@ pub struct BatteryInfo {
     pub power_now_mw: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PeripheralInfo {
     pub kind: String,
     pub name: String,
@@ -203,7 +237,7 @@ pub struct PeripheralInfo {
     pub bus: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DevEnvInfo {
     pub languages: Vec<RuntimeInfo>,
     pub package_managers: Vec<RuntimeInfo>,
@@ -214,34 +248,83 @@ pub struct DevEnvInfo {
     pub env_keys: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeInfo {
     pub name: String,
     pub version: Option<String>,
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 一次实时采样。所有速率类字段已按真实 elapsed 换算成"每秒"。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MonitorTick {
     pub timestamp: u64,
+    /// 距上一次采样的真实秒数；首次采样为 0（此时各速率均为 0）。
+    pub elapsed_secs: f64,
     pub cpu_overall: f32,
     pub cpu_per_core: Vec<f32>,
     pub mem_used_bytes: u64,
     pub mem_total_bytes: u64,
+    pub swap_used_bytes: u64,
+    pub swap_total_bytes: u64,
     pub net_rx_bps: u64,
     pub net_tx_bps: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
-    pub gpu_utilizations: Vec<f32>,
+    pub gpus: Vec<GpuTick>,
     pub temperatures: Vec<SensorReading>,
-    /// 每接口的实时 BPS。只包含本次 tick 看到的非空网卡（含 loopback），
-    /// 前端按 name 关联到 NetworkInterface 卡片即可。size 通常 < 16 项。
+    /// 每接口的实时速率，按名字关联到 `NetworkInterface`。
     pub per_interface: Vec<InterfaceTick>,
+    /// 每块物理盘的实时读写速率（已按物理设备去重）。
+    pub per_disk: Vec<DiskTick>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl MonitorTick {
+    /// CPU / SoC 相关的最高温度。
+    pub fn cpu_temperature(&self) -> Option<f32> {
+        crate::modules::cpu::cpu_temperature(&self.temperatures)
+    }
+
+    /// 所有温度传感器里的最高值。
+    pub fn max_temperature(&self) -> Option<f32> {
+        self.temperatures
+            .iter()
+            .map(|s| s.value)
+            .filter(|v| v.is_finite())
+            .fold(None, |m, v| Some(m.map_or(v, |m: f32| m.max(v))))
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GpuTick {
+    pub name: String,
+    pub utilization: Option<f32>,
+    pub vram_used_bytes: Option<u64>,
+    pub vram_total_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InterfaceTick {
     pub name: String,
     pub rx_bps: u64,
     pub tx_bps: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiskTick {
+    /// 该物理设备上挂载点最短的那个卷，与 `StorageInfo.mount_point` 对应。
+    pub mount_point: String,
+    pub read_bps: u64,
+    pub write_bps: u64,
+}
+
+/// 进程列表中的一行（任务管理器式的轻量视图）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_percent: f32,
+    pub mem_bytes: u64,
+    pub read_bps: u64,
+    pub write_bps: u64,
 }

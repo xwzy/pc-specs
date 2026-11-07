@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Generate multi-platform icon assets for the Tauri bundle and the web frontend.
+"""Generate the per-platform app icons used by the packaging step.
 
-Sources the master logo from `icon/icon.png` (1024×1024 RGBA) and renders:
-  - src-tauri/icons/{32x32, 128x128, 128x128@2x}.png
-  - src-tauri/icons/icon.png (1024)
-  - src-tauri/icons/icon.ico (Windows multi-size)
-  - src-tauri/icons/icon.icns (macOS, via iconutil if present, else Pillow ICNS)
-  - public/icon.png (256, frontend favicon)
-  - public/logo.png (512, in-app brand image)
+Sources the master logo from `icon/icon.png` (1024×1024 RGBA) and renders into `assets/icons/`:
+  - {32x32, 128x128, 128x128@2x}.png (Linux hicolor icons)
+  - icon.png (1024)
+  - icon.ico (Windows, embedded into the exe by crates/app/build.rs)
+  - icon.icns (macOS, via iconutil if present, else Pillow ICNS)
 
 Run: `python3 scripts/gen_icons.py`
 Requires: Pillow (`pip install pillow`).
@@ -23,8 +21,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "icon" / "icon.png"
-ICON_DIR = ROOT / "src-tauri" / "icons"
-PUBLIC_DIR = ROOT / "public"
+ICON_DIR = ROOT / "assets" / "icons"
 
 
 def load_master() -> Image.Image:
@@ -46,15 +43,12 @@ def load_master() -> Image.Image:
 
 def save_pngs(master: Image.Image) -> None:
     ICON_DIR.mkdir(parents=True, exist_ok=True)
-    PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
 
     targets = {
         ICON_DIR / "32x32.png": 32,
         ICON_DIR / "128x128.png": 128,
         ICON_DIR / "128x128@2x.png": 256,
         ICON_DIR / "icon.png": 1024,
-        PUBLIC_DIR / "icon.png": 256,
-        PUBLIC_DIR / "logo.png": 512,
     }
     for path, size in targets.items():
         master.resize((size, size), Image.LANCZOS).save(path, "PNG", optimize=True)
