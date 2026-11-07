@@ -88,7 +88,7 @@ pub fn init(cx: &mut App) {
 
 /// 菜单和快捷键触发的动作由系统的事件循环直接调用，里面 panic 会让整个进程 abort。
 /// 出了问题只丢掉这一次操作，应用照常运行。
-fn on_action<A: Action>(cx: &mut App, handler: impl Fn(&A, &mut App) + 'static) {
+pub fn on_action<A: Action>(cx: &mut App, handler: impl Fn(&A, &mut App) + 'static) {
     cx.on_action(move |action: &A, cx| {
         guarded("menu action", || handler(action, cx));
     });
@@ -108,6 +108,7 @@ pub fn install_menus(cx: &mut App) {
     cx.set_menus([
         Menu::new(t!("app_name").into_owned()).items([
             MenuItem::action(t!("menu_settings").into_owned(), OpenSettings),
+            MenuItem::action(t!("bs_open").into_owned(), crate::bigscreen::OpenBigScreen),
             MenuItem::separator(),
             MenuItem::action(t!("tray_quit").into_owned(), Quit),
         ]),
@@ -218,6 +219,7 @@ impl Workspace {
                     Page::Monitor,
                     Page::Processes,
                     Page::MenuBar,
+                    Page::BigScreen,
                 ],
             ))
             .child(group(
@@ -533,6 +535,13 @@ pub fn quit(cx: &mut App) {
         {
             let _ = handle.update(cx, |_, window, cx| crate::floating::remember(window, cx));
         }
+        if let Some(handle) = state.read(cx).wall_window
+            && window_alive(cx, handle)
+        {
+            let _ = handle.update(cx, |_, window, cx| {
+                crate::bigscreen::remember(&state, window, cx)
+            });
+        }
         state.read(cx).settings.save();
     });
     cx.quit();
@@ -561,10 +570,11 @@ fn window_closed(cx: &mut App) {
             cx.notify();
         });
     }
-    let (main_gone, floating_gone, keep) = {
+    let (main_gone, wall_gone, floating_gone, keep) = {
         let s = state.read(cx);
         (
             s.main_window.is_some_and(|h| !window_alive(cx, h)),
+            s.wall_window.is_some_and(|h| !window_alive(cx, h)),
             s.floating_window.is_some_and(|h| !window_alive(cx, h)),
             s.keeps_running_when_closed(),
         )
@@ -576,13 +586,32 @@ fn window_closed(cx: &mut App) {
             s.update_settings(|settings| settings.floating_net = false, cx);
         });
     }
+    if wall_gone {
+        // 大屏关了（位置在关窗之前就记下了）：补存一次设置，进程采样按需要收缩。
+        state.update(cx, |s, cx| {
+            s.wall_window = None;
+            s.sync_process_feed(cx);
+            s.settings.save();
+            cx.notify();
+        });
+    }
     if main_gone {
         state.update(cx, |s, cx| {
             s.main_window = None;
             s.sync_process_feed(cx);
             s.settings.save();
         });
-        if !keep {
+    }
+    // 主窗口和大屏都关了、又不驻留托盘，就没有理由继续运行。大屏还开着的时候，关掉主窗口不退出。
+    if (main_gone || wall_gone) && !keep {
+        let (main_open, wall_open) = {
+            let s = state.read(cx);
+            (
+                s.main_window.is_some_and(|h| window_alive(cx, h)),
+                s.wall_window.is_some_and(|h| window_alive(cx, h)),
+            )
+        };
+        if !main_open && !wall_open {
             quit(cx);
         }
     }

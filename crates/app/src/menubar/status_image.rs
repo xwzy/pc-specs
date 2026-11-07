@@ -60,6 +60,9 @@ pub struct Item<'a> {
 const HEIGHT: f32 = 22.;
 const SPARK_WIDTH: f32 = 24.;
 const SPARK_GAP: f32 = 4.;
+/// 环形仪表的外径，环宽。
+const RING_SIZE: f32 = 16.;
+const RING_STROKE: f32 = 2.6;
 const FONT: &str = "Helvetica Neue, Arial, sans-serif";
 
 #[derive(Clone)]
@@ -349,7 +352,9 @@ fn block(
 ) -> Vec<(Line, f32)> {
     match style {
         ItemStyle::Inline => inline(value, second, label, units),
-        ItemStyle::Stacked | ItemStyle::Graph => stacked(value, second, label, units),
+        ItemStyle::Stacked | ItemStyle::Graph | ItemStyle::Ring => {
+            stacked(value, second, label, units)
+        }
     }
 }
 
@@ -386,15 +391,7 @@ fn color(item: &Item, settings: &Settings) -> &'static str {
     match level(item) {
         Level::Critical => "#ef4444",
         Level::Warning => "#f97316",
-        Level::Healthy => match item.metric {
-            Metric::Cpu => "#3b82f6",
-            Metric::Memory => "#22c55e",
-            Metric::Network => "#06b6d4",
-            Metric::Temperature => "#facc15",
-            Metric::Storage => "#a78bfa",
-            Metric::Gpu => "#ec4899",
-            Metric::Battery => "#22c55e",
-        },
+        Level::Healthy => item.metric.accent(),
     }
 }
 
@@ -429,6 +426,32 @@ fn spark(svg: &mut String, history: &[f64], scale: Scale, x: f32) {
     ));
     svg.push_str(&format!(
         r#"<polyline points="{line}" fill="none" stroke="{INK}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>"#
+    ));
+}
+
+/// 左边一个小环形仪表：弧越长读数越高，没有读数时只剩底轨。从 12 点钟方向顺时针画。
+fn ring(svg: &mut String, item: &Item, x: f32) {
+    let fraction = item
+        .reading
+        .number
+        .map_or(0., |n| item.reading.scale.fraction(n, item.history));
+    let radius = (RING_SIZE - RING_STROKE) / 2.;
+    let (cx, cy) = (x + RING_SIZE / 2., HEIGHT / 2.);
+    let circumference = std::f32::consts::TAU * radius;
+    svg.push_str(&format!(
+        r#"<circle cx="{cx:.2}" cy="{cy:.2}" r="{radius:.2}" fill="none" stroke="{INK}" stroke-width="{RING_STROKE}" opacity="0.26"/>"#
+    ));
+    if fraction <= 0. {
+        return;
+    }
+    let (arc, cap) = if fraction >= 0.995 {
+        (circumference, "butt")
+    } else {
+        // 圆头让弧线两端各多出半个笔画宽，扣掉它，弧长才和读数对得上。
+        ((circumference * fraction - RING_STROKE).max(0.01), "round")
+    };
+    svg.push_str(&format!(
+        r#"<circle cx="{cx:.2}" cy="{cy:.2}" r="{radius:.2}" fill="none" stroke="{INK}" stroke-width="{RING_STROKE}" stroke-linecap="{cap}" stroke-dasharray="{arc:.2} {circumference:.2}" transform="rotate(-90 {cx:.2} {cy:.2})"/>"#
     ));
 }
 
@@ -503,8 +526,11 @@ fn build(item: &Item, settings: &Settings) -> (String, f32) {
     );
     // 当前读数万一比预估的还宽（极端数值），以实际为准，宁可多撑一点也不裁切。
     let content = widest(item, settings).max(width_of(&current));
-    let graph = item.style == ItemStyle::Graph;
-    let lead = if graph { SPARK_WIDTH + SPARK_GAP } else { 0. };
+    let lead = match item.style {
+        ItemStyle::Graph => SPARK_WIDTH + SPARK_GAP,
+        ItemStyle::Ring => RING_SIZE + SPARK_GAP,
+        ItemStyle::Stacked | ItemStyle::Inline => 0.,
+    };
     let pad = config.padding();
     let width = ((pad * 2. + lead + content) * 2.).ceil() / 2.;
 
@@ -517,8 +543,10 @@ fn build(item: &Item, settings: &Settings) -> (String, f32) {
             r#"<rect x="0" y="4" width="0.6" height="14" fill="{INK}" opacity="0.32"/>"#
         ));
     }
-    if graph {
-        spark(&mut svg, item.history, item.reading.scale, pad);
+    match item.style {
+        ItemStyle::Graph => spark(&mut svg, item.history, item.reading.scale, pad),
+        ItemStyle::Ring => ring(&mut svg, item, pad),
+        ItemStyle::Stacked | ItemStyle::Inline => {}
     }
     let left = pad + lead;
     // 两行都是数值时靠左对齐，上下箭头排成一列；其余居中。
@@ -629,7 +657,12 @@ mod tests {
     fn all_styles_render_at_retina_resolution() {
         let settings = Settings::default();
         for metric in Metric::ALL {
-            for style in [ItemStyle::Stacked, ItemStyle::Inline, ItemStyle::Graph] {
+            for style in [
+                ItemStyle::Stacked,
+                ItemStyle::Inline,
+                ItemStyle::Graph,
+                ItemStyle::Ring,
+            ] {
                 for &show in metric.shows() {
                     let reading = sample(metric, show);
                     let history = [5., 45., 20.];

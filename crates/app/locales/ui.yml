@@ -954,8 +954,8 @@ bar_system_mac:
   en: "Needs the system tray. Click an item to open its panel; right-click for app actions. macOS decides how much room the menu bar has."
   zh-CN: "需要开启系统托盘。点击任意监控项展开对应面板，右键显示应用菜单。可用空间由 macOS 决定。"
 bar_system_other:
-  en: "Metrics are listed in the system tray menu; pick one to open its panel."
-  zh-CN: "指标会列在系统托盘菜单里，选择任意一项即可展开对应面板。"
+  en: "Shows a live gauge in the system tray. Click it to open the monitor panel; right-click for the menu."
+  zh-CN: "在系统托盘里显示实时仪表图标。单击打开监控面板，右键打开菜单。"
 bar_labels:
   en: "Show metric labels"
   zh-CN: "显示指标简称"

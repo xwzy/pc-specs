@@ -63,6 +63,18 @@ impl Metric {
         rust_i18n::t!(key).into_owned()
     }
 
+    /// 这个指标的代表色（十六进制）：菜单栏位图和托盘图标共用。
+    pub fn accent(self) -> &'static str {
+        match self {
+            Self::Cpu => "#3b82f6",
+            Self::Memory | Self::Battery => "#22c55e",
+            Self::Network => "#06b6d4",
+            Self::Temperature => "#facc15",
+            Self::Storage => "#a78bfa",
+            Self::Gpu => "#ec4899",
+        }
+    }
+
     pub fn needs_processes(self) -> bool {
         matches!(self, Self::Cpu | Self::Memory | Self::Storage)
     }
@@ -91,6 +103,8 @@ pub enum ItemStyle {
     Inline,
     /// 左边一小段走势，右边是数值。
     Graph,
+    /// 左边一个小环形仪表，右边是数值，和面板里的环形是一个意思。
+    Ring,
 }
 
 /// 菜单栏上展示指标的哪个读数。`Auto` 是该指标最常看的读数（占用率、上下行……）。
@@ -125,6 +139,46 @@ impl Show {
             (Self::Remaining, _) => "bar_show_remaining",
         };
         rust_i18n::t!(key).into_owned()
+    }
+}
+
+/// 面板里走势图回看多长时间。`Live` 是最近这一两分钟的实时走势，
+/// 其余几档来自长期历史（见 `archive`）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeRange {
+    #[default]
+    Live,
+    Hour,
+    Day,
+    Week,
+    Month,
+}
+
+impl TimeRange {
+    pub const ALL: [Self; 5] = [Self::Live, Self::Hour, Self::Day, Self::Week, Self::Month];
+
+    /// 回看的时长（毫秒）。`Live` 取决于采样间隔，没有固定值。
+    pub fn span_ms(self) -> Option<u64> {
+        const HOUR: u64 = 3_600_000;
+        match self {
+            Self::Live => None,
+            Self::Hour => Some(HOUR),
+            Self::Day => Some(24 * HOUR),
+            Self::Week => Some(7 * 24 * HOUR),
+            Self::Month => Some(30 * 24 * HOUR),
+        }
+    }
+
+    /// 切换按钮上的字。几档时长的写法各语言通用，只有「实时」要翻译。
+    pub fn label(self) -> String {
+        match self {
+            Self::Live => rust_i18n::t!("range_live").into_owned(),
+            Self::Hour => "1h".into(),
+            Self::Day => "24h".into(),
+            Self::Week => "7d".into(),
+            Self::Month => "30d".into(),
+        }
     }
 }
 
@@ -230,11 +284,20 @@ impl MenuBarSettings {
         self.items.iter().filter(|item| item.enabled)
     }
 
+    /// 菜单栏 / 托盘上实际展示的监控项：总开关关着时一个都没有。
+    pub fn shown(&self) -> impl Iterator<Item = &MenuBarItem> {
+        self.items
+            .iter()
+            .filter(move |item| self.enabled && item.enabled)
+    }
+
+    #[cfg(target_os = "macos")]
     pub fn item(&self, metric: Metric) -> Option<&MenuBarItem> {
         self.items.iter().find(|item| item.metric == metric)
     }
 
     /// 某个指标当前的版式和展示内容。
+    #[cfg(target_os = "macos")]
     pub fn look(&self, metric: Metric) -> (ItemStyle, Show) {
         self.item(metric)
             .map_or_else(Default::default, |i| (i.style, i.show))

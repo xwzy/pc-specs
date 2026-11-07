@@ -1,0 +1,337 @@
+_version: 2
+bs_title:
+  en: "Monitoring Wall"
+  zh-CN: "监控大屏"
+bs_description:
+  en: "A live status board you can put on a second monitor. Pick a theme and arrange the widgets; it fits landscape, portrait and ultrawide screens."
+  zh-CN: "把实时状态铺满另一块显示器的看板。选主题、排组件，横屏、竖屏、超宽屏都能自动适配。"
+bs_open:
+  en: "Open Monitoring Wall"
+  zh-CN: "打开监控大屏"
+bs_open_wall:
+  en: "Open wall"
+  zh-CN: "打开大屏"
+bs_close_wall:
+  en: "Close wall"
+  zh-CN: "关闭大屏"
+bs_reset:
+  en: "Reset"
+  zh-CN: "恢复默认"
+bs_prev_theme:
+  en: "Previous theme"
+  zh-CN: "上一个主题"
+bs_next_theme:
+  en: "Next theme"
+  zh-CN: "下一个主题"
+bs_fullscreen:
+  en: "Full screen"
+  zh-CN: "全屏"
+bs_exit_fullscreen:
+  en: "Exit full screen"
+  zh-CN: "退出全屏"
+bs_open_settings:
+  en: "Wall settings"
+  zh-CN: "大屏设置"
+bs_close:
+  en: "Close wall"
+  zh-CN: "关闭大屏"
+bs_empty:
+  en: "Nothing to show. Turn some widgets on in the wall settings."
+  zh-CN: "没有可显示的组件，请到大屏设置里打开。"
+bs_hidden:
+  en: "%{n} hidden"
+  zh-CN: "已隐藏 %{n} 个"
+bs_temp_cpu:
+  en: "CPU / SoC"
+  zh-CN: "CPU / SoC"
+bs_f_vram:
+  en: "VRAM size"
+  zh-CN: "显存容量"
+bs_f_vram_used:
+  en: "VRAM used"
+  zh-CN: "已用显存"
+bs_f_ip:
+  en: "IP"
+  zh-CN: "IP 地址"
+bs_w_clock:
+  en: "Clock"
+  zh-CN: "时钟"
+bs_w_disk_io:
+  en: "Disk I/O"
+  zh-CN: "磁盘读写"
+bs_w_system:
+  en: "System"
+  zh-CN: "系统"
+bs_w_temperature:
+  en: "Temperature"
+  zh-CN: "温度"
+bs_wd_mon:
+  en: "Mon"
+  zh-CN: "周一"
+bs_wd_tue:
+  en: "Tue"
+  zh-CN: "周二"
+bs_wd_wed:
+  en: "Wed"
+  zh-CN: "周三"
+bs_wd_thu:
+  en: "Thu"
+  zh-CN: "周四"
+bs_wd_fri:
+  en: "Fri"
+  zh-CN: "周五"
+bs_wd_sat:
+  en: "Sat"
+  zh-CN: "周六"
+bs_wd_sun:
+  en: "Sun"
+  zh-CN: "周日"
+bs_date:
+  en: "%{weekday}, %{month_name} %{day}, %{year}"
+  zh-CN: "%{year}年%{month}月%{day}日 %{weekday}"
+bs_theme_midnight:
+  en: "Midnight"
+  zh-CN: "午夜"
+bs_theme_aurora:
+  en: "Aurora"
+  zh-CN: "极光"
+bs_theme_cyberpunk:
+  en: "Cyberpunk"
+  zh-CN: "赛博朋克"
+bs_theme_matrix:
+  en: "Matrix"
+  zh-CN: "黑客帝国"
+bs_theme_amber:
+  en: "Amber terminal"
+  zh-CN: "琥珀终端"
+bs_theme_graphite:
+  en: "Graphite"
+  zh-CN: "石墨"
+bs_theme_oled:
+  en: "OLED black"
+  zh-CN: "纯黑"
+bs_theme_nord:
+  en: "Nord"
+  zh-CN: "北欧"
+bs_theme_dracula:
+  en: "Dracula"
+  zh-CN: "德古拉"
+bs_theme_sunset:
+  en: "Sunset"
+  zh-CN: "日落"
+bs_theme_ocean:
+  en: "Deep ocean"
+  zh-CN: "深海"
+bs_theme_blueprint:
+  en: "Blueprint"
+  zh-CN: "蓝图"
+bs_theme_paper:
+  en: "Paper"
+  zh-CN: "纸张"
+bs_theme_mint:
+  en: "Mint"
+  zh-CN: "薄荷"
+bs_theme_sakura:
+  en: "Sakura"
+  zh-CN: "樱花"
+bs_preset_overview:
+  en: "Overview"
+  zh-CN: "综合概览"
+bs_preset_performance:
+  en: "Performance"
+  zh-CN: "性能"
+bs_preset_network:
+  en: "Network & disk"
+  zh-CN: "网络与磁盘"
+bs_preset_minimal:
+  en: "Minimal"
+  zh-CN: "极简"
+bs_preset_developer:
+  en: "Developer"
+  zh-CN: "开发者"
+bs_shape_landscape:
+  en: "Landscape 16:9"
+  zh-CN: "横屏 16:9"
+bs_shape_portrait:
+  en: "Portrait 9:16"
+  zh-CN: "竖屏 9:16"
+bs_shape_ultrawide:
+  en: "Ultrawide 21:9"
+  zh-CN: "超宽 21:9"
+bs_shape_square:
+  en: "Square 4:3"
+  zh-CN: "方屏 4:3"
+bs_preview:
+  en: "Preview"
+  zh-CN: "预览"
+bs_preview_hint:
+  en: "The preview is laid out like a real screen and scaled down, so it shows exactly what the wall will look like. Switch the shape to see how it adapts."
+  zh-CN: "预览按真实大屏的版式排好再等比缩小，所见即所得。切换屏幕形状，就能看到横屏、竖屏、超宽屏下的自适应效果。"
+bs_shape:
+  en: "Screen shape"
+  zh-CN: "屏幕形状"
+bs_section_display:
+  en: "Display"
+  zh-CN: "显示"
+bs_display:
+  en: "Show on"
+  zh-CN: "显示在"
+bs_display_auto:
+  en: "Auto"
+  zh-CN: "自动"
+bs_display_n:
+  en: "Display %{n}"
+  zh-CN: "显示器 %{n}"
+bs_display_primary:
+  en: "Main"
+  zh-CN: "主屏"
+bs_display_hint:
+  en: "Auto picks a second monitor when there is one, otherwise the main display. Changing it reopens a wall that is already open."
+  zh-CN: "自动：有副屏就用副屏，只有一块屏时用主屏。更改后，已经打开的大屏会按新设置重新打开。"
+bs_display_missing:
+  en: "The selected display is not connected right now, so the wall picks one automatically."
+  zh-CN: "选中的显示器当前没有连接，大屏暂时自动选择。"
+bs_display_none:
+  en: "No display detected."
+  zh-CN: "没有检测到显示器。"
+bs_fullscreen_hint:
+  en: "Turn off to show the wall in an ordinary window that you can move and resize."
+  zh-CN: "关闭后以普通窗口显示，可以自己拖动位置、调整大小。"
+bs_open_on_launch:
+  en: "Open when the app starts"
+  zh-CN: "启动应用时自动打开"
+bs_open_on_launch_hint:
+  en: "Combine it with launch at login to turn a spare monitor into a dashboard."
+  zh-CN: "配合开机自启，副屏一开机就是看板。"
+bs_keep_awake:
+  en: "Keep the screen awake"
+  zh-CN: "保持屏幕常亮"
+bs_keep_awake_hint:
+  en: "Stops the display from sleeping and the system from idling while the wall is open."
+  zh-CN: "大屏开着的时候，显示器不熄屏、系统不进入休眠。"
+bs_section_appearance:
+  en: "Appearance"
+  zh-CN: "外观"
+bs_theme:
+  en: "Theme"
+  zh-CN: "主题"
+bs_scale:
+  en: "Content size"
+  zh-CN: "内容大小"
+bs_scale_hint:
+  en: "Larger makes text and charts bigger. Widgets that no longer fit are dropped from the end of the list."
+  zh-CN: "越大文字和图表越大，放不下的组件会从列表末尾开始隐藏。"
+bs_density:
+  en: "Spacing"
+  zh-CN: "间距"
+bs_density_compact:
+  en: "Tight"
+  zh-CN: "紧凑"
+bs_density_normal:
+  en: "Normal"
+  zh-CN: "标准"
+bs_density_relaxed:
+  en: "Relaxed"
+  zh-CN: "宽松"
+bs_chart:
+  en: "Chart style"
+  zh-CN: "图表样式"
+bs_chart_auto:
+  en: "Theme default"
+  zh-CN: "跟随主题"
+bs_chart_area:
+  en: "Area"
+  zh-CN: "面积"
+bs_chart_line:
+  en: "Line"
+  zh-CN: "折线"
+bs_chart_bars:
+  en: "Bars"
+  zh-CN: "柱状"
+bs_chart_minutes:
+  en: "Chart time span"
+  zh-CN: "图表时间跨度"
+bs_minutes:
+  en: "%{n} min"
+  zh-CN: "%{n} 分钟"
+bs_show_header:
+  en: "Show header"
+  zh-CN: "显示顶栏"
+bs_header_title:
+  en: "Header title"
+  zh-CN: "顶栏标题"
+bs_title_placeholder:
+  en: "Leave empty to use the host name"
+  zh-CN: "留空则显示主机名"
+bs_show_clock:
+  en: "Show the time in the header"
+  zh-CN: "顶栏显示时间"
+bs_show_seconds:
+  en: "Show seconds"
+  zh-CN: "显示秒"
+bs_hour24:
+  en: "24-hour clock"
+  zh-CN: "24 小时制"
+bs_section_layout:
+  en: "Layout"
+  zh-CN: "布局"
+bs_presets:
+  en: "Layout presets"
+  zh-CN: "布局方案"
+bs_presets_hint:
+  en: "A preset rewrites the widget list below. Theme and display stay as they are."
+  zh-CN: "选择方案会重排下面的组件列表，主题和显示器保持不变。"
+bs_hide_missing:
+  en: "Hide hardware this computer does not have"
+  zh-CN: "隐藏本机没有的硬件"
+bs_hide_missing_hint:
+  en: "Skips widgets such as battery or GPU on machines without them, so the others get the space."
+  zh-CN: "没有电池、独立显卡等硬件时不占位，空间让给其他组件。"
+bs_per_core:
+  en: "Show per-core CPU usage"
+  zh-CN: "CPU 组件显示每个核心"
+bs_rank:
+  en: "Rank processes by"
+  zh-CN: "进程排序依据"
+bs_rank_cpu:
+  en: "CPU"
+  zh-CN: "CPU 占用"
+bs_rank_memory:
+  en: "Memory"
+  zh-CN: "内存占用"
+bs_widgets:
+  en: "Widgets"
+  zh-CN: "组件"
+bs_widgets_hint:
+  en: "Widgets are placed in list order. Width and height are relative: a 2×1 widget gets twice the area of a 1×1."
+  zh-CN: "按列表从上到下的顺序摆放。宽、高是相对大小：2×1 的组件面积是 1×1 的两倍。"
+bs_width:
+  en: "W"
+  zh-CN: "宽"
+bs_height:
+  en: "H"
+  zh-CN: "高"
+bs_section_keys:
+  en: "Keyboard shortcuts"
+  zh-CN: "快捷键"
+bs_key_fullscreen:
+  en: "Toggle full screen"
+  zh-CN: "切换全屏"
+bs_key_leave:
+  en: "Leave full screen"
+  zh-CN: "退出全屏"
+bs_key_theme:
+  en: "Previous / next theme"
+  zh-CN: "上一个 / 下一个主题"
+bs_key_zoom:
+  en: "Zoom content in / out"
+  zh-CN: "放大 / 缩小内容"
+bs_key_header:
+  en: "Show / hide the header"
+  zh-CN: "显示 / 隐藏顶栏"
+bs_key_settings:
+  en: "Open wall settings"
+  zh-CN: "打开大屏设置"
+bs_keys_hint:
+  en: "Move the mouse over the wall to bring up the toolbar. Cmd / Ctrl + Shift + B opens the wall from anywhere in the app."
+  zh-CN: "鼠标在大屏上一动，就会浮出工具条。在应用里的任何地方按 Cmd / Ctrl + Shift + B 都能打开大屏。"

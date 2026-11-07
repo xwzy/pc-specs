@@ -4,6 +4,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod autostart;
+mod bigscreen;
 mod floating;
 mod fmt;
 mod health;
@@ -120,6 +121,7 @@ fn main() {
         cx.set_quit_mode(QuitMode::Explicit);
 
         workspace::init(cx);
+        bigscreen::init(cx);
 
         let state = cx.new(|cx| AppState::new(settings, cx));
         cx.set_global(Hub(state.clone()));
@@ -140,5 +142,7 @@ fn main() {
             workspace::open_main_window(cx);
         }
         state.update(cx, |s, cx| s.sync_floating(cx));
+        // 做成常驻看板的人会希望开机自启之后大屏直接出现在副屏上。
+        bigscreen::open_on_launch(cx);
     });
 }

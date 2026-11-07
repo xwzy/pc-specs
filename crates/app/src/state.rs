@@ -7,7 +7,9 @@
 //! 线程约定：系统信息采集全是阻塞调用，一律放到独立的 `std::thread`，结果经
 //! `async_channel` 回到界面线程。`Sampler` 在 Windows 上不是 `Send`，所以必须在监控线程内创建。
 
+use crate::bigscreen::data::History;
 use crate::health::{self, Alert, AlertKind, Level};
+use crate::menubar::archive::Archive;
 use crate::menubar::data::{self as menu_data, Sample};
 use crate::poster;
 use crate::settings::{Settings, ThemePref};
@@ -52,6 +54,7 @@ pub enum Page {
     DevEnv,
     Monitor,
     MenuBar,
+    BigScreen,
     Processes,
     Export,
     Settings,
@@ -88,6 +91,7 @@ impl Page {
             Page::DevEnv => "dev-env",
             Page::Monitor => "monitor",
             Page::MenuBar => "menu-bar",
+            Page::BigScreen => "big-screen",
             Page::Processes => "processes",
             Page::Export => "export",
             Page::Settings => "settings",
@@ -111,6 +115,7 @@ impl Page {
             Page::DevEnv => IconName::Terminal,
             Page::Monitor => IconName::Activity,
             Page::MenuBar => IconName::ChartNoAxesCombined,
+            Page::BigScreen => IconName::MonitorPlay,
             Page::Processes => IconName::List,
             Page::Export => IconName::FileDown,
             Page::Settings => IconName::Settings,
@@ -134,6 +139,7 @@ impl Page {
             Page::DevEnv => t!("nav_dev_env"),
             Page::Monitor => t!("nav_monitor"),
             Page::MenuBar => t!("bar_title"),
+            Page::BigScreen => t!("bs_title"),
             Page::Processes => t!("nav_processes"),
             Page::Export => t!("nav_export"),
             Page::Settings => t!("nav_settings"),
@@ -230,6 +236,10 @@ pub struct AppState {
     pub ticks: VecDeque<MonitorTick>,
     /// 菜单栏面板的走势历史，和 `ticks` 各记各的（见 `push_tick`）。
     pub menu_history: VecDeque<Sample>,
+    /// 监控大屏的走势历史：同样各记各的，暂停 / 清空监控页不影响大屏。
+    pub wall: History,
+    /// 菜单栏面板的长期走势（1 小时到 30 天），按设置存在磁盘上，见 `menubar::archive`。
+    pub archive: Archive,
     /// 与 `ticks` 一一对应的时间标签（`HH:MM:SS`），图表横轴用，推入时生成一次。
     pub tick_labels: VecDeque<SharedString>,
     pub latest: Option<MonitorTick>,
@@ -252,6 +262,8 @@ pub struct AppState {
 
     pub main_window: Option<AnyWindowHandle>,
     pub floating_window: Option<AnyWindowHandle>,
+    /// 监控大屏窗口。它是独立的看板，可以在主窗口关掉之后单独留着。
+    pub wall_window: Option<AnyWindowHandle>,
     pub detail_window: Option<AnyWindowHandle>,
     pub detail_metric: Option<crate::menubar::config::Metric>,
     /// 弹窗刚被关掉的指标和时间：点击菜单栏项会先让弹窗失焦关闭、再触发点击，
@@ -313,6 +325,8 @@ impl AppState {
                             state.update(cx, |s, cx| s.set_page(Page::MenuBar, cx));
                             crate::workspace::show_main_window(cx);
                         }
+                        TrayEvent::BigScreen => crate::bigscreen::open(cx),
+                        TrayEvent::Panel => crate::menubar::panel::toggle(AppState::global(cx), cx),
                         TrayEvent::Inspect(metric, anchor) => {
                             let state = AppState::global(cx);
                             let anchor = anchor.or_else(|| {
@@ -330,6 +344,7 @@ impl AppState {
         })
         .detach();
 
+        let archive = Archive::open(settings.history_persist);
         let mut this = Self {
             settings,
             page: Page::Dashboard,
@@ -342,6 +357,8 @@ impl AppState {
             autostart: crate::autostart::is_enabled(),
             ticks: VecDeque::new(),
             menu_history: VecDeque::new(),
+            wall: History::default(),
+            archive,
             tick_labels: VecDeque::new(),
             latest: None,
             paused: false,
@@ -362,6 +379,7 @@ impl AppState {
             server_epoch: 0,
             main_window: None,
             floating_window: None,
+            wall_window: None,
             detail_window: None,
             detail_metric: None,
             detail_closed: None,
@@ -375,9 +393,18 @@ impl AppState {
         this.restart_server(cx);
         this.refresh(cx);
 
+        // 退出前把还没落盘的长期历史写下去（包括正在积累的最后一分钟）。
+        cx.on_app_quit(|this, _| {
+            guarded("save history", || this.archive.shutdown());
+            async {}
+        })
+        .detach();
+
         cx.spawn(async move |this, cx| {
             loop {
-                let visible = this.read_with(cx, |this, _| this.main_window.is_some());
+                let visible = this.read_with(cx, |this, _| {
+                    this.main_window.is_some() || this.wall_window.is_some()
+                });
                 let Ok(visible) = visible else { break };
                 let wait = if visible {
                     LIVE_REFRESH_VISIBLE
@@ -400,6 +427,7 @@ impl AppState {
         let before = self.settings.clone();
         f(&mut self.settings);
         self.settings.menu_bar.normalize();
+        self.settings.bigscreen.normalize();
         if self.settings == before {
             return;
         }
@@ -424,8 +452,19 @@ impl AppState {
         {
             self.sync_tray();
         }
+        if now.history_persist != before.history_persist {
+            self.archive.set_persist(now.history_persist);
+        }
         if now.floating_net != before.floating_net {
             self.sync_floating(cx);
+        }
+        // 大屏上的进程组件开关了，进程采样跟着启停。
+        let wants_processes = |s: &Settings| {
+            s.bigscreen
+                .uses(crate::bigscreen::config::WidgetKind::Processes)
+        };
+        if wants_processes(&now) != wants_processes(&before) {
+            self.sync_process_feed(cx);
         }
         if now.server_enabled != before.server_enabled || now.server_lan != before.server_lan {
             self.restart_server(cx);
@@ -654,8 +693,12 @@ impl AppState {
                 .menu_bar
                 .visible()
                 .any(|item| item.metric == crate::menubar::config::Metric::Temperature);
-        // 窗口、菜单栏弹窗开着，或者菜单栏上有温度项：读数有人看，按正常节奏读。
-        if self.main_window.is_some() || self.detail_window.is_some() || on_menu_bar {
+        // 窗口、菜单栏弹窗、监控大屏开着，或者菜单栏上有温度项：读数有人看，按正常节奏读。
+        if self.main_window.is_some()
+            || self.detail_window.is_some()
+            || self.wall_window.is_some()
+            || on_menu_bar
+        {
             Some(TEMPERATURE_TTL)
         } else if self.settings.alerts {
             Some(ALERT_TEMPERATURE_EVERY)
@@ -677,11 +720,23 @@ impl AppState {
         // 把磁盘 / 网卡 / GPU 的实时读数写回快照，各页面直接读快照即可。
         self.snapshot.merge_tick(&tick);
         // 菜单栏面板的走势单独记：「暂停」只冻结实时监控页的图表。
-        self.menu_history
-            .push_back(Sample::new(&tick, &self.snapshot, &self.settings));
+        let sample = Sample::new(&tick, &self.snapshot, &self.settings);
+        // 睡眠、合盖之后醒来：中间那段没有采样，实时走势不该把两头连成一条线，从醒来这一刻重画。
+        let gap_ms = (self.settings.interval_ms * 4).max(5_000);
+        if self
+            .menu_history
+            .back()
+            .is_some_and(|last| sample.timestamp.saturating_sub(last.timestamp) > gap_ms)
+        {
+            self.menu_history.clear();
+        }
+        self.archive
+            .record(sample.timestamp, |channel| sample.value(channel));
+        self.menu_history.push_back(sample);
         while self.menu_history.len() > menu_data::HISTORY {
             self.menu_history.pop_front();
         }
+        self.wall.push(&tick);
         if let Some(tray) = self.tray.as_mut() {
             tray.on_tick(&tick, &self.settings, &self.snapshot);
         }
@@ -710,6 +765,22 @@ impl AppState {
         self.ticks.clear();
         self.tick_labels.clear();
         cx.notify();
+    }
+
+    /// 清空菜单栏面板的全部走势：长期历史（内存和磁盘）和最近的实时走势。
+    pub fn clear_archive(&mut self, cx: &mut Context<Self>) {
+        self.archive.clear();
+        self.menu_history.clear();
+        cx.notify();
+    }
+
+    /// 面板里所有走势图一起切换的回看时长。
+    pub fn set_panel_range(
+        &mut self,
+        range: crate::menubar::config::TimeRange,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_settings(|s| s.panel_range = range, cx);
     }
 
     pub fn toggle_paused(&mut self, cx: &mut Context<Self>) {
@@ -778,6 +849,11 @@ impl AppState {
         if (self.page == Page::Processes && self.main_window.is_some())
             || (self.detail_window.is_some()
                 && self.detail_metric.is_some_and(|m| m.needs_processes()))
+            || (self.wall_window.is_some()
+                && self
+                    .settings
+                    .bigscreen
+                    .uses(crate::bigscreen::config::WidgetKind::Processes))
         {
             if self.process_stop.is_none() {
                 self.start_process_feed(cx);
@@ -1053,6 +1129,15 @@ impl AppState {
                 state.update(cx, |s, _| s.floating_window = handle);
             }
         });
+    }
+
+    /// 大屏窗口刚打开：把会变的几项补采一遍，温度和进程也按需要启动。
+    pub fn wall_opened(&mut self, handle: AnyWindowHandle, cx: &mut Context<Self>) {
+        self.wall_window = Some(handle);
+        self.sync_temperature_demand();
+        self.sync_process_feed(cx);
+        self.refresh_live(cx);
+        cx.notify();
     }
 
     fn sync_tray(&mut self) {

@@ -1,0 +1,43 @@
+_version: 2
+bar_ring:
+  en: "Ring"
+  zh-CN: "环形"
+history_clear:
+  en: "Clear history"
+  zh-CN: "清空历史"
+history_hint:
+  en: "Powers the 1 h to 30 d views in the monitor panels. Readings are averaged into 1-minute and 30-minute slots, compressed, and capped at about 0.5 MB, so it never keeps growing. Turn off to keep history in memory only."
+  zh-CN: "面板里 1 小时到 30 天的走势就是从这里来的。读数按 1 分钟、30 分钟取平均后压缩保存，总量固定在 0.5 MB 左右，不会越积越多。关闭后只在运行期间保留。"
+history_persist:
+  en: "Keep history after quitting"
+  zh-CN: "退出后保留历史走势"
+history_title:
+  en: "History"
+  zh-CN: "历史走势"
+history_usage:
+  en: "Disk usage"
+  zh-CN: "磁盘占用"
+panel_average:
+  en: "Average"
+  zh-CN: "平均"
+panel_busiest_core:
+  en: "Busiest core · #%{n}"
+  zh-CN: "最忙核心 · %{n} 号"
+panel_collecting:
+  en: "Collecting history…"
+  zh-CN: "正在积累历史数据…"
+panel_peak:
+  en: "Peak %{value}"
+  zh-CN: "峰值 %{value}"
+panel_power:
+  en: "Power"
+  zh-CN: "功耗"
+range_live:
+  en: "Live"
+  zh-CN: "实时"
+unit_days:
+  en: "%{n} d"
+  zh-CN: "%{n} 天"
+unit_hours:
+  en: "%{n} h"
+  zh-CN: "%{n} 小时"

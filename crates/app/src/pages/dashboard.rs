@@ -302,7 +302,7 @@ pub fn primary_storage(s: &AppState) -> Option<&pc_specs_core::model::StorageInf
 }
 
 /// 优先选已连接、有 IPv4 的物理接口。
-fn primary_interface(s: &AppState) -> Option<&NetworkInterface> {
+pub fn primary_interface(s: &AppState) -> Option<&NetworkInterface> {
     s.snapshot
         .network
         .interfaces

@@ -379,7 +379,7 @@ impl NativeItems {
             let reading = data::reading(metric, show, tick, snapshot, settings);
             record(&mut self.trends, metric, show, reading.number);
             let history: Vec<f64> = match self.trends.get(&metric) {
-                Some((_, history)) if style == ItemStyle::Graph => {
+                Some((_, history)) if matches!(style, ItemStyle::Graph | ItemStyle::Ring) => {
                     history.iter().copied().collect()
                 }
                 _ => Vec::new(),

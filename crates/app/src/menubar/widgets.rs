@@ -1,9 +1,12 @@
-//! 监控面板里「一格一格」的 LED 式图表。直接用 canvas 画方块，不依赖图表库。
+//! 监控面板里的图形部件：一格一格的 LED 走势、条形，和环形仪表。
+//! 直接用 canvas 画方块和圆弧，不依赖图表库的布局。
 use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::plot::shape::{Arc, ArcData};
 use gpui_kit::{
     App, Bounds, FontFeatures, Hsla, IntoElement, Styled as _, canvas, fill, point, px, size,
 };
-use std::sync::Arc;
+use std::f32::consts::TAU;
+use std::sync::Arc as Shared;
 
 /// 点亮的格子怎么上色：低处用主色，越过阈值的格子换成警告 / 危险色，像音量表一样。
 #[derive(Clone, Copy)]
@@ -73,6 +76,29 @@ pub fn columns(
     gap: (f32, f32),
     palette: Palette,
 ) -> impl IntoElement {
+    grid(values, cols, rows, gap, palette, false)
+}
+
+/// 和 `columns` 一样，但格子从上往下长。和 `columns` 上下摆在一起就是一张对称的图：
+/// 上行在中线之上、下行在中线之下（上传 / 下载、读 / 写）。
+pub fn columns_down(
+    values: Vec<Option<f32>>,
+    cols: usize,
+    rows: usize,
+    gap: (f32, f32),
+    palette: Palette,
+) -> impl IntoElement {
+    grid(values, cols, rows, gap, palette, true)
+}
+
+fn grid(
+    values: Vec<Option<f32>>,
+    cols: usize,
+    rows: usize,
+    gap: (f32, f32),
+    palette: Palette,
+    hanging: bool,
+) -> impl IntoElement {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
@@ -92,8 +118,13 @@ pub fn columns(
                         palette.off
                     };
                     let x = bounds.origin.x + px(col as f32 * (cell_w + gap.0));
+                    let step = row as f32 * (cell_h + gap.1);
                     let y = bounds.origin.y
-                        + px(height - (row + 1) as f32 * cell_h - row as f32 * gap.1);
+                        + px(if hanging {
+                            step
+                        } else {
+                            height - cell_h - step
+                        });
                     window.paint_quad(
                         fill(
                             Bounds::new(point(x, y), size(px(cell_w), px(cell_h))),
@@ -136,7 +167,67 @@ pub fn meter(fraction: f32, cells: usize, gap: f32, palette: Palette) -> impl In
     .size_full()
 }
 
+/// 环形仪表：一圈暗色的底轨，上面从 12 点钟方向顺时针画出 `fraction`（0..=1）那一段，两头是圆的。
+/// 大小固定为 `diameter` 见方，数字之类放在里面的内容由调用方叠上去。
+pub fn ring(
+    fraction: f32,
+    diameter: f32,
+    thickness: f32,
+    tone: Hsla,
+    track: Hsla,
+) -> impl IntoElement {
+    let fraction = if fraction.is_finite() {
+        fraction.clamp(0., 1.)
+    } else {
+        0.
+    };
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let outer = diameter / 2.;
+            let inner = (outer - thickness).max(0.);
+            let arc = Arc::new().inner_radius(inner).outer_radius(outer);
+            arc.paint(&ArcData::new(&(), 0, 1., 0., TAU), track, &bounds, window);
+            if fraction <= 0. {
+                return;
+            }
+            let end = TAU * fraction;
+            arc.paint(
+                &ArcData::new(&(), 1, fraction, 0., end),
+                tone,
+                &bounds,
+                window,
+            );
+            if fraction >= 0.999 {
+                return;
+            }
+            // 圆头：在弧线的两端各补一个直径等于环宽的圆。
+            let middle = (outer + inner) / 2.;
+            let centre = point(
+                bounds.origin.x.as_f32() + bounds.size.width.as_f32() / 2.,
+                bounds.origin.y.as_f32() + bounds.size.height.as_f32() / 2.,
+            );
+            for angle in [0., end] {
+                let x = centre.x + middle * angle.sin();
+                let y = centre.y - middle * angle.cos();
+                let half = thickness / 2.;
+                window.paint_quad(
+                    fill(
+                        Bounds::new(
+                            point(px(x - half), px(y - half)),
+                            size(px(thickness), px(thickness)),
+                        ),
+                        tone,
+                    )
+                    .corner_radii(px(half)),
+                );
+            }
+        },
+    )
+    .size(px(diameter))
+}
+
 /// 等宽数字：数值每秒跳动时不会因为字宽不同而左右抖。
 pub fn tabular<E: gpui_kit::Styled>(element: E) -> E {
-    element.font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
+    element.font_features(FontFeatures(Shared::new(vec![("tnum".into(), 1)])))
 }

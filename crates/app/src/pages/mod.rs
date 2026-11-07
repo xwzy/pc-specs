@@ -4,7 +4,7 @@
 mod battery;
 pub mod chart;
 mod cpu;
-mod dashboard;
+pub mod dashboard;
 mod dev_env;
 mod display;
 mod export;
@@ -29,13 +29,16 @@ use pc_specs_core::util::guarded;
 /// 带有自身状态的页面实体。
 pub struct Pages {
     processes: Entity<processes::ProcessesPage>,
+    bigscreen: Entity<crate::bigscreen::preferences::BigScreenPage>,
 }
 
 impl Pages {
     pub fn new(state: &Entity<AppState>, window: &mut Window, cx: &mut Context<Workspace>) -> Self {
         let state = state.clone();
         Self {
-            processes: cx.new(|cx| processes::ProcessesPage::new(state, window, cx)),
+            processes: cx.new(|cx| processes::ProcessesPage::new(state.clone(), window, cx)),
+            bigscreen: cx
+                .new(|cx| crate::bigscreen::preferences::BigScreenPage::new(state, window, cx)),
         }
     }
 }
@@ -81,6 +84,7 @@ pub fn render(
         Page::DevEnv => dev_env::render(s, state, cx),
         Page::Monitor => monitor::render(s, state, cx),
         Page::MenuBar => crate::menubar::preferences::render(state, cx),
+        Page::BigScreen => pages.bigscreen.clone().into_any_element(),
         Page::Processes => pages.processes.clone().into_any_element(),
         Page::Export => export::render(s, state, cx),
         Page::Settings => settings::render(state, cx),

@@ -65,6 +65,7 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
                 };
                 hinted(row.into_any_element(), hint.into_owned(), cx)
             })
+            // 菜单栏位图的外观只有 macOS 用得上；其它平台的托盘图标是固定的环形仪表。
             .when(cfg!(target_os = "macos"), |this| {
                 this.child(hinted(
                     toggle(
@@ -78,41 +79,39 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
                     t!("bar_show_icon_hint").into_owned(),
                     cx,
                 ))
-            })
-            .child(toggle(
-                state,
-                "bar-labels",
-                t!("bar_labels").into_owned(),
-                config.show_labels,
-                |c, v| c.show_labels = v,
-                cx,
-            ))
-            .child(toggle(
-                state,
-                "bar-units",
-                t!("bar_units").into_owned(),
-                config.show_units,
-                |c, v| c.show_units = v,
-                cx,
-            ))
-            .child(toggle(
-                state,
-                "bar-separators",
-                t!("bar_separators").into_owned(),
-                config.separators,
-                |c, v| c.separators = v,
-                cx,
-            ))
-            .child(toggle(
-                state,
-                "bar-colorful",
-                t!("bar_colorful").into_owned(),
-                config.colorful,
-                |c, v| c.colorful = v,
-                cx,
-            ))
-            .when(cfg!(target_os = "macos"), |this| {
-                this.child(hinted(
+                .child(toggle(
+                    state,
+                    "bar-labels",
+                    t!("bar_labels").into_owned(),
+                    config.show_labels,
+                    |c, v| c.show_labels = v,
+                    cx,
+                ))
+                .child(toggle(
+                    state,
+                    "bar-units",
+                    t!("bar_units").into_owned(),
+                    config.show_units,
+                    |c, v| c.show_units = v,
+                    cx,
+                ))
+                .child(toggle(
+                    state,
+                    "bar-separators",
+                    t!("bar_separators").into_owned(),
+                    config.separators,
+                    |c, v| c.separators = v,
+                    cx,
+                ))
+                .child(toggle(
+                    state,
+                    "bar-colorful",
+                    t!("bar_colorful").into_owned(),
+                    config.colorful,
+                    |c, v| c.colorful = v,
+                    cx,
+                ))
+                .child(hinted(
                     stepper(
                         state,
                         "bar-spacing",
@@ -148,6 +147,7 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
                 |c, v| c.process_rows = v,
             )),
     );
+    let history = history(state, s, cx);
     let count = config.items.len();
     let items = v_flex().children(
         config
@@ -176,6 +176,7 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
         vec![
             preview.into_any_element(),
             general.into_any_element(),
+            history,
             ui::section("bar-items", t!("bar_items").into_owned())
                 .child(items)
                 .into_any_element(),
@@ -184,21 +185,69 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
     )
 }
 
+/// 历史走势：面板里 1 小时到 30 天的图从这里来。
+fn history(state: &Entity<AppState>, s: &AppState, cx: &App) -> AnyElement {
+    let persist = {
+        let state = state.clone();
+        let row = h_flex()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .child(div().text_sm().child(t!("history_persist").into_owned()))
+            .child(
+                Switch::new("history-persist")
+                    .accessibility_label(t!("history_persist").into_owned())
+                    .checked(s.settings.history_persist)
+                    .on_click(move |checked, _, cx| {
+                        let checked = *checked;
+                        state.update(cx, |s, cx| {
+                            s.update_settings(|v| v.history_persist = checked, cx)
+                        });
+                    }),
+            );
+        hinted(row.into_any_element(), t!("history_hint").into_owned(), cx)
+    };
+    let usage = {
+        let state = state.clone();
+        h_flex()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .text_color(cx.theme().foreground)
+            .child(div().text_sm().child(t!("history_usage").into_owned()))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_3()
+                    .child(widgets::tabular(
+                        ui::muted(s.settings.bytes(s.archive.disk_bytes()), cx).text_sm(),
+                    ))
+                    .child(
+                        Button::new("history-clear")
+                            .small()
+                            .outline()
+                            .label(t!("history_clear").into_owned())
+                            .on_click(move |_, _, cx| {
+                                state.update(cx, |s, cx| s.clear_archive(cx))
+                            }),
+                    ),
+            )
+    };
+    ui::section("bar-history", t!("history_title").into_owned())
+        .child(v_flex().gap_4().child(persist).child(usage))
+        .into_any_element()
+}
+
 /// 菜单栏位图里实际画出来的文字。
 fn bar_text(value: &Value, show_units: bool) -> String {
     format!("{}{}{}", value.lead, value.num, value.bar_unit(show_units))
 }
 
 /// 最近一小段走势，按和菜单栏位图同样的量程缩放到 0..=1。
+/// 取自菜单栏自己的走势记录：主窗口暂停、清空实时监控时，预览照样在动。
 fn trend(s: &AppState, item: &MenuBarItem, scale: Scale) -> Vec<Option<f32>> {
-    let skip = s.ticks.len().saturating_sub(12);
-    let raw: Vec<Option<f64>> = s
-        .ticks
-        .iter()
-        .skip(skip)
-        .map(|tick| {
-            data::reading(item.metric, item.show, Some(tick), &s.snapshot, &s.settings).number
-        })
+    let raw: Vec<Option<f64>> = super::recent(s, 12)
+        .map(|sample| sample.number(item.metric))
         .collect();
     let window: Vec<f64> = raw.iter().flatten().copied().collect();
     raw.into_iter()
@@ -280,6 +329,23 @@ fn preview_item(s: &AppState, item: &MenuBarItem, cx: &App) -> Div {
                     .gap(px(3.))
                     .children(lines.into_iter().map(|line| number(line, 12.))),
             ),
+        ItemStyle::Ring => {
+            let latest = trend(s, item, reading.scale)
+                .last()
+                .copied()
+                .flatten()
+                .unwrap_or(0.);
+            h_flex()
+                .items_center()
+                .gap(px(6.))
+                .child(widgets::ring(latest, 16., 2.6, ink, ink.opacity(0.26)))
+                .child(
+                    v_flex()
+                        .items_end()
+                        .gap(px(3.))
+                        .children(lines.into_iter().map(|line| number(line, 12.))),
+                )
+        }
     }
 }
 
@@ -414,6 +480,7 @@ fn item_card(
                 (ItemStyle::Stacked, t!("bar_stacked").into_owned()),
                 (ItemStyle::Inline, t!("bar_inline").into_owned()),
                 (ItemStyle::Graph, t!("bar_graph").into_owned()),
+                (ItemStyle::Ring, t!("bar_ring").into_owned()),
             ],
             item.style,
             move |style, cx| edit(&state, metric, |i| i.style = style, cx),
@@ -481,7 +548,9 @@ fn item_card(
                 v_flex()
                     .gap_2()
                     .pl(px(42.))
-                    .child(option(t!("bar_style").into_owned(), styles))
+                    .when(cfg!(target_os = "macos"), |this| {
+                        this.child(option(t!("bar_style").into_owned(), styles))
+                    })
                     .children(
                         contents.map(|control| option(t!("bar_content").into_owned(), control)),
                     ),

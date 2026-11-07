@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod config;
 mod content;
 pub mod data;
@@ -7,7 +8,7 @@ pub mod panel;
 pub mod preferences;
 #[cfg(any(target_os = "macos", test))]
 pub mod status_image;
-mod widgets;
+pub(crate) mod widgets;
 
 use crate::state::{AppState, Page};
 use config::Metric;
@@ -34,16 +35,25 @@ fn recent(s: &AppState, last: usize) -> impl Iterator<Item = &data::Sample> {
         .skip(s.menu_history.len().saturating_sub(last))
 }
 
-/// 最近 `last` 个采样里某个指标的数值，`None` 表示那一刻没有读数。
-pub fn history(s: &AppState, metric: Metric, last: usize) -> Vec<Option<f64>> {
-    recent(s, last)
-        .map(|sample| sample.number(metric))
-        .collect()
-}
+/// 面板里走势图的柱子数：默认每秒一个采样时，「实时」正好是一分钟。
+pub const COLUMNS: usize = 60;
 
-/// 最近 `last` 个采样里的某个速率（字节每秒）。
-pub fn rates(s: &AppState, last: usize, pick: fn(&data::Sample) -> u64) -> Vec<f64> {
-    recent(s, last).map(|sample| pick(sample) as f64).collect()
+/// 面板里一张走势图的数据。「实时」是最近 `COLUMNS` 个采样（一个采样一根柱子），
+/// 其余档位从长期历史里按时间均分成 `COLUMNS` 根；`None` 表示那一段没有读数。
+pub fn series(s: &AppState, range: config::TimeRange, channel: data::Channel) -> archive::Series {
+    if range != config::TimeRange::Live {
+        return s.archive.series(range, channel, archive::now_ms(), COLUMNS);
+    }
+    let columns: Vec<Option<f64>> = recent(s, COLUMNS)
+        .map(|sample| sample.value(channel))
+        .collect();
+    let known = || columns.iter().flatten().copied();
+    let count = known().count();
+    archive::Series {
+        mean: (count > 0).then(|| known().sum::<f64>() / count as f64),
+        peak: known().reduce(f64::max),
+        columns,
+    }
 }
 
 pub fn color(metric: Metric, cx: &App) -> gpui_kit::Hsla {

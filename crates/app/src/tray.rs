@@ -4,6 +4,10 @@
 //! 菜单：几行只读的实时指标 + 「显示窗口」+「退出」。菜单与图标事件在平台线程里触发，
 //! 这里只往 channel 里丢一个 `TrayEvent`，由界面线程的 `AppState` 转成窗口操作。
 
+#[cfg(not(target_os = "macos"))]
+use crate::health::{self, Level};
+#[cfg(not(target_os = "macos"))]
+use crate::menubar::data::Scale;
 use crate::menubar::{Anchor, config::Metric, data};
 use crate::settings::Settings;
 use pc_specs_core::model::{MonitorTick, SystemSnapshot};
@@ -16,6 +20,7 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 const SHOW_ID: &str = "pc-specs.show";
 const QUIT_ID: &str = "pc-specs.quit";
 const CONFIG_ID: &str = "pc-specs.configure";
+const WALL_ID: &str = "pc-specs.bigscreen";
 
 /// 采样周期有抖动，到点之前这么一点也算到了；不然 1 秒的刷新间隔会隔一次才刷新一回。
 const REFRESH_SLACK: Duration = Duration::from_millis(150);
@@ -29,6 +34,10 @@ pub enum TrayEvent {
     Show,
     Quit,
     Configure,
+    /// 打开监控大屏。
+    BigScreen,
+    /// 单击托盘图标（没有菜单栏的平台）：展开第一个监控项的面板，没有监控项就打开主窗口。
+    Panel,
     Inspect(Metric, Option<Anchor>),
 }
 
@@ -43,6 +52,9 @@ pub struct Tray {
     tooltip: String,
     tooltip_at: Option<Instant>,
     last_refresh: Instant,
+    /// 图标上现在画的环形仪表（没有菜单栏的平台）。`None` 是品牌图标。
+    #[cfg(not(target_os = "macos"))]
+    gauge: Option<Gauge>,
     #[cfg(target_os = "macos")]
     native: crate::menubar::native::NativeItems,
 }
@@ -99,6 +111,8 @@ impl Tray {
             tooltip: String::new(),
             tooltip_at: None,
             last_refresh: Instant::now(),
+            #[cfg(not(target_os = "macos"))]
+            gauge: None,
             #[cfg(target_os = "macos")]
             native,
         };
@@ -188,8 +202,29 @@ impl Tray {
             }
         }
         self.lines = lines;
+        #[cfg(not(target_os = "macos"))]
+        self.sync_gauge(settings, tick, snapshot);
         #[cfg(target_os = "macos")]
         self.native.refresh(settings, tick, snapshot);
+    }
+
+    /// 图标换成当前读数对应的环形仪表。读数没跨过 5% 一档就不动：
+    /// 换图标在 Windows 是一次 `Shell_NotifyIcon`，在 Linux 是一次 D-Bus 通知。
+    #[cfg(not(target_os = "macos"))]
+    fn sync_gauge(
+        &mut self,
+        settings: &Settings,
+        tick: Option<&MonitorTick>,
+        snapshot: &SystemSnapshot,
+    ) {
+        let wanted = gauge(settings, tick, snapshot);
+        if wanted == self.gauge {
+            return;
+        }
+        if let Some(icon) = wanted.map_or_else(app_icon, ring_icon) {
+            let _ = self.icon.set_icon(Some(icon));
+            self.gauge = wanted;
+        }
     }
 
     pub fn anchor(&self, metric: Metric) -> Option<Anchor> {
@@ -241,6 +276,7 @@ fn install_handlers(events: async_channel::Sender<TrayEvent>) {
             SHOW_ID => TrayEvent::Show,
             QUIT_ID => TrayEvent::Quit,
             CONFIG_ID => TrayEvent::Configure,
+            WALL_ID => TrayEvent::BigScreen,
             id => {
                 let Some(metric) = Metric::ALL
                     .into_iter()
@@ -271,7 +307,7 @@ fn install_handlers(events: async_channel::Sender<TrayEvent>) {
                 let anchor = None;
                 let _ = events.try_send(TrayEvent::Inspect(metric, anchor));
             } else if !cfg!(target_os = "macos") {
-                let _ = events.try_send(TrayEvent::Show);
+                let _ = events.try_send(TrayEvent::Panel);
             }
         }
     }));
@@ -285,7 +321,7 @@ fn build_menu(
     let menu = Menu::new();
     let metrics: Vec<MenuItem> = metric_lines(latest, settings, snapshot)
         .iter()
-        .zip(settings.menu_bar.visible())
+        .zip(settings.menu_bar.shown())
         .map(|(line, item)| {
             MenuItem::with_id(
                 format!("pc-specs.inspect.{}", item.metric.key()),
@@ -302,6 +338,7 @@ fn build_menu(
         let _ = menu.append(&PredefinedMenuItem::separator());
     }
     let _ = menu.append(&MenuItem::with_id(SHOW_ID, &t!("tray_show"), true, None));
+    let _ = menu.append(&MenuItem::with_id(WALL_ID, &t!("bs_open"), true, None));
     let _ = menu.append(&MenuItem::with_id(
         CONFIG_ID,
         &t!("bar_configure"),
@@ -320,7 +357,7 @@ fn metric_lines(
 ) -> Vec<String> {
     settings
         .menu_bar
-        .visible()
+        .shown()
         .map(|item| {
             let reading = data::reading(item.metric, item.show, tick, snapshot, settings);
             format!("{}  {}", item.metric.title(), reading.plain())
@@ -332,6 +369,7 @@ fn metric_lines(
 pub fn quick_menu() -> Menu {
     let menu = Menu::new();
     let _ = menu.append(&MenuItem::with_id(SHOW_ID, &t!("tray_show"), true, None));
+    let _ = menu.append(&MenuItem::with_id(WALL_ID, &t!("bs_open"), true, None));
     let _ = menu.append(&MenuItem::with_id(
         CONFIG_ID,
         &t!("bar_configure"),
@@ -365,13 +403,82 @@ const COLOR_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
 </svg>"##;
 
 fn app_icon() -> Option<Icon> {
-    let (svg, px) = if cfg!(target_os = "macos") {
-        (TEMPLATE_SVG, 44)
-    } else if cfg!(target_os = "windows") {
-        (COLOR_SVG, 32)
+    if cfg!(target_os = "macos") {
+        rasterize(TEMPLATE_SVG, 44)
     } else {
-        (COLOR_SVG, 64)
+        rasterize(COLOR_SVG, icon_size())
+    }
+}
+
+/// 没有菜单栏的平台上托盘图标的边长（像素）。
+fn icon_size() -> u32 {
+    if cfg!(target_os = "windows") { 32 } else { 64 }
+}
+
+/// 托盘图标上画的环形仪表：指标、读数（5% 一档）和健康程度，三样都没变就不用重画。
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Gauge {
+    metric: Metric,
+    step: u8,
+    level: Level,
+}
+
+/// 第一个显示出来、读数有固定量程的指标（网速这类没有满量程，画不成环）。没有就保持品牌图标。
+#[cfg(not(target_os = "macos"))]
+fn gauge(
+    settings: &Settings,
+    tick: Option<&MonitorTick>,
+    snapshot: &SystemSnapshot,
+) -> Option<Gauge> {
+    settings.menu_bar.shown().find_map(|item| {
+        let reading = data::reading(item.metric, item.show, tick, snapshot, settings);
+        let number = reading.number?;
+        if reading.scale == Scale::Rate {
+            return None;
+        }
+        let level = match item.metric {
+            Metric::Temperature => health::temperature_level(number as f32),
+            Metric::Battery => health::battery_level(number as f32),
+            _ => health::usage_level(number as f32),
+        };
+        Some(Gauge {
+            metric: item.metric,
+            step: (reading.scale.fraction(number, &[]) * 20.).round() as u8,
+            level,
+        })
+    })
+}
+
+/// 一圈细环：灰色底轨在深色、浅色任务栏上都看得清，弧线是指标色，进入警告 / 严重区间换橙 / 红。
+/// 读数再低也留一小段弧，免得空闲时只剩一圈灰、看不出是哪个指标。
+#[cfg(not(target_os = "macos"))]
+fn ring_icon(gauge: Gauge) -> Option<Icon> {
+    const RADIUS: f32 = 11.;
+    const STROKE: f32 = 5.;
+    let color = match gauge.level {
+        Level::Critical => "#ef4444",
+        Level::Warning => "#f97316",
+        Level::Healthy => gauge.metric.accent(),
     };
+    let circumference = std::f32::consts::TAU * RADIUS;
+    let fraction = (f32::from(gauge.step) / 20.).clamp(0.05, 1.);
+    let (arc, cap) = if fraction >= 0.995 {
+        (circumference, "butt")
+    } else {
+        // 圆头让弧线两端各多出半个笔画宽，扣掉它弧长才和读数对得上。
+        ((circumference * fraction - STROKE).max(0.01), "round")
+    };
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<circle cx="16" cy="16" r="{RADIUS}" fill="none" stroke="#8b949e" stroke-opacity="0.5" stroke-width="{STROKE}"/>
+<circle cx="16" cy="16" r="{RADIUS}" fill="none" stroke="{color}" stroke-width="{STROKE}" stroke-linecap="{cap}" stroke-dasharray="{arc:.2} {circumference:.2}" transform="rotate(-90 16 16)"/>
+</svg>"##
+    );
+    rasterize(&svg, icon_size())
+}
+
+fn rasterize(svg: &str, px: u32) -> Option<Icon> {
     let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?;
     let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
     let scale = px as f32 / tree.size().width();

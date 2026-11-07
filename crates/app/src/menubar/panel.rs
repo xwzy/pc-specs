@@ -3,7 +3,7 @@
 use super::{
     Anchor, color,
     config::Metric,
-    content::{self, Block, Flyout, PAD, Side, WIDTH},
+    content::{self, Block, Flyout, PAD, SPACE, Side, WIDTH},
     icon, metric_page,
 };
 use crate::state::{AppState, Page};
@@ -11,7 +11,9 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
+    h_flex,
+    tooltip::Tooltip,
+    v_flex,
 };
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, DisplayId, Entity, FocusHandle,
@@ -30,8 +32,10 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("escape", Dismiss, Some("MonitorPanel"))]);
 }
 
-const HEADER: f32 = 60.;
-const FOOTER: f32 = 44.;
+const HEADER: f32 = 56.;
+const FOOTER: f32 = 40.;
+/// 指标页签条的高度。
+const TABS: f32 = 38.;
 /// 上下各 1px 的边框。
 const BORDER: f32 = 2.;
 const RADIUS: f32 = 12.;
@@ -74,18 +78,60 @@ impl Area {
     }
 }
 
+/// 没有菜单栏的平台上，托盘图标在屏幕的哪个角：面板就从那个角弹出来。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Corner {
+    TopRight,
+    BottomRight,
+    BottomLeft,
+}
+
+impl Corner {
+    /// 任务栏 / 面板条占了屏幕的哪一边，图标就在那一边的右端（竖着的任务栏在下端）。
+    /// `bounds` 是整块屏幕，`work` 是除去任务栏之后的工作区。两者一样大（Linux 常常不报告）
+    /// 就看不出来，按平台习惯：Windows 在下，其它在上。
+    fn of(bounds: Area, work: Area) -> Self {
+        let top = work.top - bounds.top;
+        let bottom = bounds.bottom - work.bottom;
+        let left = work.left - bounds.left;
+        let right = bounds.right - work.right;
+        let largest = top.max(bottom).max(left).max(right);
+        if largest < 1. {
+            if cfg!(target_os = "windows") {
+                Self::BottomRight
+            } else {
+                Self::TopRight
+            }
+        } else if largest == top {
+            Self::TopRight
+        } else if largest == left {
+            Self::BottomLeft
+        } else {
+            Self::BottomRight
+        }
+    }
+}
+
 /// 面板左上角：左边缘对齐被点的菜单栏项（像下拉菜单一样），贴在菜单栏下沿，靠近屏幕右边时整体往里收。
-fn place(anchor: Option<Anchor>, area: Area, width: f32, height: f32) -> (f32, f32) {
+/// 没有菜单栏项可以对齐时（托盘图标），贴着托盘所在的屏幕角落。
+fn place(
+    anchor: Option<Anchor>,
+    corner: Corner,
+    area: Area,
+    width: f32,
+    height: f32,
+) -> (f32, f32) {
     let max_x = (area.right - width - MARGIN).max(area.left + MARGIN);
-    let (x, top) = match anchor {
-        Some(a) => (
-            a.left.clamp(area.left + MARGIN, max_x),
-            a.bottom.max(area.top) + BAR_GAP,
-        ),
-        None => (max_x, area.top + BAR_GAP),
-    };
     let max_y = (area.bottom - height - MARGIN).max(area.top);
-    (x, top.min(max_y))
+    match (anchor, corner) {
+        (Some(a), _) => (
+            a.left.clamp(area.left + MARGIN, max_x),
+            (a.bottom.max(area.top) + BAR_GAP).min(max_y),
+        ),
+        (None, Corner::TopRight) => (max_x, (area.top + BAR_GAP).min(max_y)),
+        (None, Corner::BottomRight) => (max_x, max_y),
+        (None, Corner::BottomLeft) => (area.left + MARGIN, max_y),
+    }
 }
 
 /// 二级页面放在面板的哪一侧：右边放得下就放右边，否则放左边，两边都放不下取空间大的一边。
@@ -116,8 +162,32 @@ fn place_flyout(
     (x, y)
 }
 
-fn panel_height(blocks: &[Block]) -> f32 {
-    BORDER + HEADER + blocks.iter().map(|b| b.height).sum::<f32>() + FOOTER
+/// 头部、页签条、各张卡片（每张下面留一道间距，第一张上面也留一道）和底栏加起来的高度。
+fn panel_height(blocks: &[Block], tabbed: bool) -> f32 {
+    let tabs = if tabbed { TABS } else { 0. };
+    BORDER + HEADER + tabs + SPACE + blocks.iter().map(|b| b.height + SPACE).sum::<f32>() + FOOTER
+}
+
+/// 面板顶上的指标页签：没有菜单栏的平台上没法再点另一个菜单栏项来换指标，就在面板里换。
+/// 只有一个指标可看时不需要，返回空。
+fn tabs_for(s: &AppState, current: Metric) -> Vec<Metric> {
+    if cfg!(target_os = "macos") {
+        return Vec::new();
+    }
+    let mut metrics: Vec<Metric> = s
+        .settings
+        .menu_bar
+        .shown()
+        .map(|item| item.metric)
+        .collect();
+    if !metrics.contains(&current) {
+        metrics.push(current);
+    }
+    if metrics.len() > 1 {
+        metrics
+    } else {
+        Vec::new()
+    }
 }
 
 fn popup(
@@ -141,6 +211,25 @@ fn popup(
         window_background: WindowBackgroundAppearance::Transparent,
         display_id: display,
         ..Default::default()
+    }
+}
+
+/// 单击托盘图标（没有菜单栏的平台）：面板开着，或者刚因为这一下点击失去焦点关掉，就收起它；
+/// 否则展开第一个监控项的面板，没有监控项就打开主窗口。
+pub fn toggle(state: Entity<AppState>, cx: &mut App) {
+    let metric = {
+        let s = state.read(cx);
+        s.detail_metric
+            .or_else(|| {
+                s.detail_closed
+                    .filter(|(_, at)| at.elapsed() < TOGGLE_WINDOW)
+                    .map(|(metric, _)| metric)
+            })
+            .or_else(|| s.settings.menu_bar.shown().next().map(|item| item.metric))
+    };
+    match metric {
+        Some(metric) => show(state, metric, None, cx),
+        None => crate::workspace::show_main_window(cx),
     }
 }
 
@@ -182,21 +271,33 @@ pub fn show(state: Entity<AppState>, metric: Metric, anchor: Option<Anchor>, cx:
         },
         |d| Area::of(d.visible_bounds()),
     );
-    let top = anchor.map_or(area.top, |a| a.bottom.max(area.top)) + BAR_GAP;
-    let (x, _) = place(anchor, area, WIDTH, 0.);
+    // 没有菜单栏的平台：看任务栏在屏幕哪一边，面板就从托盘所在的那个角弹出。
+    let corner = display
+        .as_ref()
+        .filter(|_| !cfg!(target_os = "macos"))
+        .map_or(Corner::TopRight, |d| {
+            Corner::of(Area::of(d.bounds()), Area::of(d.visible_bounds()))
+        });
+    let top = match (anchor, corner) {
+        (Some(a), _) => a.bottom.max(area.top) + BAR_GAP,
+        (None, Corner::TopRight) => area.top + BAR_GAP,
+        (None, _) => area.top + MARGIN,
+    };
+    let (x, _) = place(anchor, corner, area, WIDTH, 0.);
     let side = flyout_side(x, area, WIDTH, WIDTH);
     let (rows, height) = {
         let s = state.read(cx);
+        let tabbed = !tabs_for(s, metric).is_empty();
         let mut rows = s.settings.menu_bar.process_rows;
         loop {
-            let height = panel_height(&content::blocks(s, metric, side, rows, cx));
+            let height = panel_height(&content::blocks(s, metric, side, rows, cx), tabbed);
             if height <= area.bottom - MARGIN - top || rows <= MIN_ROWS {
                 break (rows, height);
             }
             rows -= 1;
         }
     };
-    let (x, y) = place(anchor, area, WIDTH, height);
+    let (x, y) = place(anchor, corner, area, WIDTH, height);
     let options = popup(x, y, WIDTH, height, true, display.map(|d| d.id()));
     let geometry = Geometry {
         origin: (x, y),
@@ -469,7 +570,7 @@ impl MetricPanel {
             .border_color(theme.border)
             .child(
                 div()
-                    .size(px(34.))
+                    .size(px(32.))
                     .flex_shrink_0()
                     .flex()
                     .items_center()
@@ -527,6 +628,50 @@ impl MetricPanel {
             )
     }
 
+    fn tab_strip(&self, tabs: &[Metric], cx: &Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let muted = theme.muted_foreground;
+        let hover = theme.foreground.opacity(0.06);
+        h_flex()
+            .h(px(TABS))
+            .flex_shrink_0()
+            .px(px(PAD))
+            .gap(px(4.))
+            .items_center()
+            .border_b_1()
+            .border_color(theme.border)
+            .children(tabs.iter().map(|&metric| {
+                let on = metric == self.metric;
+                let tint = color(metric, cx);
+                let state = self.state.clone();
+                let title = metric.title();
+                div()
+                    .id(("tab", metric.index()))
+                    .flex_1()
+                    .h(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(7.))
+                    .cursor_pointer()
+                    .when(on, |tab| tab.bg(tint.opacity(0.16)))
+                    .when(!on, |tab| tab.hover(move |style| style.bg(hover)))
+                    .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
+                    .on_click(move |_, _, cx| {
+                        if !on {
+                            // 换指标要关掉这个窗口再开一个（位置跟着高度走），不能在它自己的事件里做。
+                            let state = state.clone();
+                            cx.defer(move |cx| show(state, metric, None, cx));
+                        }
+                    })
+                    .child(Icon::new(icon(metric)).size(px(15.)).text_color(if on {
+                        tint
+                    } else {
+                        muted
+                    }))
+            }))
+    }
+
     fn footer(&self, cx: &Context<Self>) -> impl IntoElement {
         let metric = self.metric;
         let (open_state, config_state) = (self.state.clone(), self.state.clone());
@@ -567,16 +712,20 @@ impl MetricPanel {
 
 impl Render for MetricPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (blocks, subtitle) = {
+        let (blocks, subtitle, tabs) = {
             let s = self.state.read(cx);
             // 绘制由系统回调直接驱动，这里 panic 会让整个进程 abort：画不出来就先空着。
             let blocks = guarded("panel content", || {
                 content::blocks(s, self.metric, self.geometry.side, self.geometry.rows, cx)
             })
             .unwrap_or_default();
-            (blocks, content::subtitle(s, self.metric))
+            (
+                blocks,
+                content::subtitle(s, self.metric),
+                tabs_for(s, self.metric),
+            )
         };
-        let height = panel_height(&blocks);
+        let height = panel_height(&blocks, !tabs.is_empty());
         if (height - self.height).abs() >= 0.5 {
             self.height = height;
             window.defer(cx, move |window, _| {
@@ -584,24 +733,24 @@ impl Render for MetricPanel {
             });
         }
         let theme = cx.theme();
-        let hover = theme.foreground.opacity(0.05);
+        let hover = theme.foreground.opacity(0.08);
         let open = self.flyout.as_ref().map(|open| open.kind);
         let rows = blocks.into_iter().enumerate().map(|(index, block)| {
-            let row = div()
-                .id(("block", index))
-                .w_full()
+            let card = content::frame(cx)
+                .h(px(block.height))
+                .mb(px(SPACE))
                 .flex_shrink_0()
-                .px(px(PAD))
+                .id(("block", index))
                 .child(block.element);
             match block.trigger {
-                Some(kind) => row
-                    .when(open == Some(kind), |row| row.bg(hover))
+                Some(kind) => card
+                    .when(open == Some(kind), |card| card.bg(hover))
                     .hover(move |style| style.bg(hover))
                     .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                         this.hover_trigger(kind, *hovered, cx)
                     }))
                     .into_any_element(),
-                None => row.into_any_element(),
+                None => card.into_any_element(),
             }
         });
         v_flex()
@@ -617,7 +766,10 @@ impl Render for MetricPanel {
             .overflow_hidden()
             .on_action(cx.listener(|_, _: &Dismiss, window, _| window.remove_window()))
             .child(self.header(subtitle, cx))
-            .child(v_flex().flex_1().min_h_0().children(rows))
+            .when(!tabs.is_empty(), |panel| {
+                panel.child(self.tab_strip(&tabs, cx))
+            })
+            .child(v_flex().flex_1().min_h_0().pt(px(SPACE)).children(rows))
             .child(self.footer(cx))
     }
 }
@@ -693,15 +845,21 @@ mod tests {
 
     #[test]
     fn panel_hangs_from_the_clicked_item() {
-        let (x, y) = place(Some(anchor(600., 33.)), MAIN, WIDTH, 560.);
+        let (x, y) = place(Some(anchor(600., 33.)), Corner::TopRight, MAIN, WIDTH, 560.);
         assert_eq!((x, y), (600., 33. + BAR_GAP));
     }
 
     #[test]
     fn panel_is_pulled_back_inside_near_the_screen_edge() {
-        let (x, _) = place(Some(anchor(1480., 33.)), MAIN, WIDTH, 560.);
+        let (x, _) = place(
+            Some(anchor(1480., 33.)),
+            Corner::TopRight,
+            MAIN,
+            WIDTH,
+            560.,
+        );
         assert_eq!(x, MAIN.right - WIDTH - MARGIN);
-        let (x, _) = place(Some(anchor(-30., 33.)), MAIN, WIDTH, 560.);
+        let (x, _) = place(Some(anchor(-30., 33.)), Corner::TopRight, MAIN, WIDTH, 560.);
         assert_eq!(x, MARGIN);
     }
 
@@ -714,10 +872,16 @@ mod tests {
             right: 1920.,
             bottom: 1080.,
         };
-        let (_, y) = place(Some(anchor(1500., 30.)), dell, WIDTH, 560.);
+        let (_, y) = place(
+            Some(anchor(1500., 30.)),
+            Corner::TopRight,
+            dell,
+            WIDTH,
+            560.,
+        );
         assert_eq!(y, 30. + BAR_GAP);
         // 菜单栏高度没报准（比可用区域还靠上）时，也不盖住菜单栏。
-        let (_, y) = place(Some(anchor(1500., 0.)), dell, WIDTH, 560.);
+        let (_, y) = place(Some(anchor(1500., 0.)), Corner::TopRight, dell, WIDTH, 560.);
         assert_eq!(y, 30. + BAR_GAP);
     }
 
@@ -730,13 +894,31 @@ mod tests {
             bottom: 700.,
         };
         // 放得下：贴着菜单栏。
-        let (_, y) = place(Some(anchor(800., 24.)), small, WIDTH, 600.);
+        let (_, y) = place(
+            Some(anchor(800., 24.)),
+            Corner::TopRight,
+            small,
+            WIDTH,
+            600.,
+        );
         assert_eq!(y, 24. + BAR_GAP);
         // 比屏幕还高：顶到可用区域的上沿，不盖住菜单栏。
-        let (_, y) = place(Some(anchor(800., 24.)), small, WIDTH, 800.);
+        let (_, y) = place(
+            Some(anchor(800., 24.)),
+            Corner::TopRight,
+            small,
+            WIDTH,
+            800.,
+        );
         assert_eq!(y, small.top);
         // 锚点本身很靠下（比如 Dock 在顶部的奇怪布局）：整体上移，底边留出边距。
-        let (_, y) = place(Some(anchor(800., 400.)), small, WIDTH, 400.);
+        let (_, y) = place(
+            Some(anchor(800., 400.)),
+            Corner::TopRight,
+            small,
+            WIDTH,
+            400.,
+        );
         assert_eq!(y, small.bottom - MARGIN - 400.);
     }
 

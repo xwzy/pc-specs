@@ -1,7 +1,7 @@
 use super::config::{Metric, Show};
 use crate::{
     fmt,
-    settings::{NetUnit, Settings, SizeUnit},
+    settings::{NetUnit, Settings},
 };
 use pc_specs_core::model::{MonitorTick, ProcessInfo, StorageInfo, SystemSnapshot};
 
@@ -82,10 +82,52 @@ impl Scale {
 /// 面板里走势图最多保留多少个采样。
 pub const HISTORY: usize = 120;
 
+/// 会被长期记录的曲线。顺序就是落盘文件里的列顺序：改动之后旧文件会因为列数对不上被丢弃重来。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Channel {
+    Cpu,
+    Memory,
+    Temperature,
+    Gpu,
+    Battery,
+    NetDown,
+    NetUp,
+    DiskRead,
+    DiskWrite,
+}
+
+impl Channel {
+    pub const ALL: [Self; 9] = [
+        Self::Cpu,
+        Self::Memory,
+        Self::Temperature,
+        Self::Gpu,
+        Self::Battery,
+        Self::NetDown,
+        Self::NetUp,
+        Self::DiskRead,
+        Self::DiskWrite,
+    ];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    pub fn scale(self) -> Scale {
+        match self {
+            Self::Temperature => Scale::Celsius,
+            Self::NetDown | Self::NetUp | Self::DiskRead | Self::DiskWrite => Scale::Rate,
+            _ => Scale::Percent,
+        }
+    }
+}
+
 /// 面板走势图里的一个采样，只留画图要的数，不带单位。
 /// 和「实时监控」页的历史分开存：那边暂停、清空、换保留时长，都不该影响菜单栏。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sample {
+    /// 采样时刻，Unix 毫秒。
+    pub timestamp: u64,
     numbers: [Option<f64>; Metric::ALL.len()],
     pub net_down: u64,
     pub net_up: u64,
@@ -96,6 +138,7 @@ pub struct Sample {
 impl Sample {
     pub fn new(tick: &MonitorTick, snapshot: &SystemSnapshot, settings: &Settings) -> Self {
         Self {
+            timestamp: tick.timestamp,
             numbers: Metric::ALL
                 .map(|m| reading(m, Show::Auto, Some(tick), snapshot, settings).number),
             net_down: tick.net_rx_bps,
@@ -107,6 +150,21 @@ impl Sample {
 
     pub fn number(&self, metric: Metric) -> Option<f64> {
         self.numbers[metric.index()]
+    }
+
+    /// 某条曲线在这个采样里的值，`None` 表示那一刻没有读数。
+    pub fn value(&self, channel: Channel) -> Option<f64> {
+        match channel {
+            Channel::Cpu => self.number(Metric::Cpu),
+            Channel::Memory => self.number(Metric::Memory),
+            Channel::Temperature => self.number(Metric::Temperature),
+            Channel::Gpu => self.number(Metric::Gpu),
+            Channel::Battery => self.number(Metric::Battery),
+            Channel::NetDown => Some(self.net_down as f64),
+            Channel::NetUp => Some(self.net_up as f64),
+            Channel::DiskRead => Some(self.disk_read as f64),
+            Channel::DiskWrite => Some(self.disk_write as f64),
+        }
     }
 }
 
@@ -326,6 +384,7 @@ pub fn reading(
 
 /// 同一版式下可能出现的最宽读数（第一行，第二行）。位图宽度按它固定，数值跳动时
 /// 菜单栏上的其它项不会跟着左右抖动。
+#[cfg(any(target_os = "macos", test))]
 pub fn widest(metric: Metric, show: Show, settings: &Settings) -> Vec<(Value, Option<Value>)> {
     // 每一档单位里最宽的两种读数：数字两位时带 `/s`（`9.0M/s`），三位时不带（`888M`）。
     let rates = |lines: [&'static str; 2], both: bool| -> Vec<(Value, Option<Value>)> {
@@ -354,6 +413,7 @@ pub fn widest(metric: Metric, show: Show, settings: &Settings) -> Vec<(Value, Op
         ],
         // 容量的三种位数（`9.00`、`99.0`、`888`）各档单位都试一遍，`8.88M` 这种最宽。
         (Metric::Memory | Metric::Storage, Show::Used | Show::Free) => {
+            use crate::settings::SizeUnit;
             let base = match settings.size_unit {
                 SizeUnit::Binary => 1024_f64,
                 SizeUnit::Decimal => 1000_f64,
