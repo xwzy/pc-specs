@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the per-platform app icons used by the packaging step.
 
-Sources the master logo from `icon/icon.png` (1024×1024 RGBA) and renders into `assets/icons/`:
+Sources the master logo from `assets/icons/source.png` (1024×1024 RGBA) and renders the rest into `assets/icons/`:
   - {32x32, 128x128, 128x128@2x}.png (Linux hicolor icons)
   - icon.png (1024)
   - icon.ico (Windows, embedded into the exe by crates/app/build.rs)
@@ -20,8 +20,8 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "icon" / "icon.png"
 ICON_DIR = ROOT / "assets" / "icons"
+SRC = ICON_DIR / "source.png"
 
 
 def load_master() -> Image.Image:

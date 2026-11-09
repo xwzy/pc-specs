@@ -1,0 +1,121 @@
+_version: 2
+net_connection:
+  en: "Connection"
+  zh-CN: "连通性"
+net_online:
+  en: "Online"
+  zh-CN: "已联网"
+net_offline:
+  en: "Offline"
+  zh-CN: "已断网"
+net_measuring:
+  en: "Measuring…"
+  zh-CN: "测量中…"
+net_timeout:
+  en: "No reply"
+  zh-CN: "无响应"
+net_target:
+  en: "Target"
+  zh-CN: "对象"
+net_target_gateway:
+  en: "Router"
+  zh-CN: "路由器"
+net_target_dns:
+  en: "DNS server"
+  zh-CN: "DNS 服务器"
+net_target_internet:
+  en: "Internet"
+  zh-CN: "互联网"
+net_address:
+  en: "Address"
+  zh-CN: "地址"
+net_latency:
+  en: "Latency"
+  zh-CN: "延迟"
+net_latency_avg:
+  en: "Average"
+  zh-CN: "平均"
+net_jitter:
+  en: "Jitter"
+  zh-CN: "抖动"
+net_loss:
+  en: "Loss"
+  zh-CN: "丢包"
+net_trend:
+  en: "Last 2 min"
+  zh-CN: "最近 2 分钟"
+net_probe_hint:
+  en: "Round-trip time of a TCP handshake, measured every 2 seconds while this page is open. It goes out through the physical network card, so VPN and proxy tunnels don't distort it."
+  zh-CN: "TCP 握手的往返时间，页面打开期间每 2 秒量一次。探测直接走物理网卡，不受 VPN、代理隧道影响。"
+net_wifi:
+  en: "Wi-Fi"
+  zh-CN: "Wi-Fi"
+net_wifi_network:
+  en: "Network"
+  zh-CN: "网络"
+net_wifi_signal:
+  en: "Signal"
+  zh-CN: "信号"
+net_wifi_noise:
+  en: "Noise"
+  zh-CN: "底噪"
+net_wifi_snr:
+  en: "Signal-to-noise"
+  zh-CN: "信噪比"
+net_wifi_channel:
+  en: "Channel"
+  zh-CN: "信道"
+net_wifi_standard:
+  en: "Standard"
+  zh-CN: "协议"
+net_wifi_rate:
+  en: "Link rate"
+  zh-CN: "连接速率"
+net_wifi_security:
+  en: "Security"
+  zh-CN: "加密"
+net_wifi_bssid:
+  en: "Access point"
+  zh-CN: "接入点"
+net_wifi_excellent:
+  en: "Excellent"
+  zh-CN: "极好"
+net_wifi_good:
+  en: "Good"
+  zh-CN: "良好"
+net_wifi_fair:
+  en: "Fair"
+  zh-CN: "一般"
+net_wifi_weak:
+  en: "Weak"
+  zh-CN: "较弱"
+net_usage:
+  en: "Data usage"
+  zh-CN: "流量统计"
+net_usage_today:
+  en: "Today"
+  zh-CN: "今天"
+net_usage_week:
+  en: "Last 7 days"
+  zh-CN: "最近 7 天"
+net_usage_month:
+  en: "This month"
+  zh-CN: "本月"
+net_usage_total:
+  en: "All time"
+  zh-CN: "累计"
+net_usage_since:
+  en: "since %{date}"
+  zh-CN: "自 %{date} 起"
+net_usage_daily:
+  en: "Daily"
+  zh-CN: "每日"
+net_usage_hint:
+  en: "Counted while PC Specs is running. Loopback and virtual interfaces are left out, like the speeds shown elsewhere."
+  zh-CN: "只统计 PC Specs 运行期间的流量。和别处显示的速度一样，不含回环和虚拟网卡。"
+net_usage_reset:
+  en: "Reset"
+  zh-CN: "清零"
+net_usage_reset_hint:
+  en: "Clear all counted traffic and start again"
+  zh-CN: "清除全部累计流量，重新开始统计"

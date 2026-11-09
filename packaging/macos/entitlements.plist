@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 签名时由 scripts/macos/package.sh 带上（加固运行时下，没有声明的能力会被系统直接拒绝）。 -->
+<plist version="1.0">
+<dict>
+  <!-- 启动项页通过「系统事件」读取和修改登录项，需要发送 Apple 事件。 -->
+  <key>com.apple.security.automation.apple-events</key><true/>
+</dict>
+</plist>

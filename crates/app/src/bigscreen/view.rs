@@ -205,7 +205,7 @@ fn top_bar(c: &Ctx, rect: Rect, inset: f32, hidden: usize) -> AnyElement {
             t!("app_name").into_owned()
         }
     };
-    let system = format!("{} {}", snapshot.os.name, snapshot.os.version);
+    let system = crate::fmt::os_title(&snapshot.os);
     let level = health::overall(&app.alerts());
     let level_color = pal.level(level);
 

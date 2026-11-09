@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 模板：__VERSION__ / __MIN_OS__ / __YEAR__ 由 scripts/macos/package.sh 替换，版本号来自根 Cargo.toml。 -->
 <plist version="1.0">
 <dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>PC Specs</string>
   <key>CFBundleDisplayName</key><string>PC Specs</string>
   <key>CFBundleIdentifier</key><string>com.xwzy.pc-specs</string>
@@ -10,7 +13,21 @@
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>__VERSION__</string>
   <key>CFBundleVersion</key><string>__VERSION__</string>
+  <!-- 声明界面语言：系统自带的对话框、菜单项才会跟着显示中文。 -->
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
+  <key>LSMinimumSystemVersion</key><string>__MIN_OS__</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+  <key>NSHumanReadableCopyright</key><string>Copyright © __YEAR__ pc-specs contributors. MIT License.</string>
+  <!-- 首次打开「启动项」时系统弹出的授权框会显示这句话：读取和修改登录项要控制「系统事件」。 -->
+  <key>NSAppleEventsUsageDescription</key><string>PC Specs reads and changes your login items through System Events. / PC Specs 通过“系统事件”读取和修改你的登录项。</string>
+  <!-- 存储分析要读文件大小，清理要在放代码的文件夹里找旧项目的构建产物：访问这几个文件夹时系统弹出的授权框会显示这些话。只读元数据，不读文件内容。 -->
+  <key>NSDocumentsFolderUsageDescription</key><string>PC Specs reads file sizes in Documents to show what uses your disk space and to find old project build folders. File contents are never read. / PC Specs 读取“文稿”里的文件大小，用来分析空间占用、找出旧项目的构建文件夹，不读取文件内容。</string>
+  <key>NSDesktopFolderUsageDescription</key><string>PC Specs reads file sizes on the Desktop to show what uses your disk space and to find old project build folders. File contents are never read. / PC Specs 读取“桌面”上的文件大小，用来分析空间占用、找出旧项目的构建文件夹，不读取文件内容。</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>PC Specs reads file sizes in Downloads to show what uses your disk space. File contents are never read. / PC Specs 读取“下载”里的文件大小，用来分析空间占用，不读取文件内容。</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict>

@@ -1,0 +1,99 @@
+_version: 2
+
+# ---- 启动项 ----
+nav_startup:
+  en: "Startup items"
+  zh-CN: "启动项"
+startup_intro:
+  en: "What starts by itself when you log in or boot. Turning an item off deletes nothing and you can turn it on again any time; the change applies from the next login."
+  zh-CN: "登录或开机时会自己启动的东西。关掉一项不会删除任何东西，随时可以再打开；改动从下次登录起生效。"
+startup_summary:
+  en: "%{n} items"
+  zh-CN: "共 %{n} 项"
+startup_summary_off:
+  en: "%{n} items, %{off} turned off"
+  zh-CN: "共 %{n} 项，已关闭 %{off} 项"
+startup_refresh:
+  en: "Refresh"
+  zh-CN: "刷新"
+startup_empty:
+  en: "No startup items found."
+  zh-CN: "没有发现启动项。"
+startup_group_login_item:
+  en: "Login items"
+  zh-CN: "登录项"
+startup_group_launch_agent:
+  en: "Launch agents"
+  zh-CN: "启动代理"
+startup_group_launch_daemon:
+  en: "Launch daemons"
+  zh-CN: "启动守护进程"
+startup_group_registry:
+  en: "Registry"
+  zh-CN: "注册表"
+startup_group_startup_folder:
+  en: "Startup folder"
+  zh-CN: "启动文件夹"
+startup_group_autostart:
+  en: "Autostart"
+  zh-CN: "自动启动项"
+startup_desc_login_item:
+  en: "Apps that open when you log in (System Settings → General → Login Items)."
+  zh-CN: "登录时自动打开的应用（系统设置 → 通用 → 登录项）。"
+startup_desc_launch_agent:
+  en: "Background helpers that launchd starts for your account."
+  zh-CN: "由 launchd 为你的账户启动的后台程序。"
+startup_desc_launch_daemon:
+  en: "System-wide background services that start at boot. Changing them takes administrator rights, so they are listed for reference only."
+  zh-CN: "开机就启动的系统级后台服务。修改需要管理员权限，这里仅供查看。"
+startup_desc_registry:
+  en: "Programs Windows starts when you sign in (the Run keys in the registry)."
+  zh-CN: "登录 Windows 时自动启动的程序（注册表里的 Run 项）。"
+startup_desc_startup_folder:
+  en: "Shortcuts and programs in the Startup folder."
+  zh-CN: "「启动」文件夹里的快捷方式和程序。"
+startup_desc_autostart:
+  en: "Entries in the autostart folders that start with your desktop session."
+  zh-CN: "随桌面会话启动的 autostart 项。"
+startup_trigger_login:
+  en: "At login"
+  zh-CN: "登录时"
+startup_trigger_boot:
+  en: "At startup"
+  zh-CN: "开机时"
+startup_trigger_keep:
+  en: "Always running"
+  zh-CN: "保持运行"
+startup_trigger_schedule:
+  en: "On a schedule"
+  zh-CN: "定时运行"
+startup_trigger_demand:
+  en: "On demand"
+  zh-CN: "按需启动"
+startup_running:
+  en: "Running"
+  zh-CN: "运行中"
+startup_system:
+  en: "System-wide"
+  zh-CN: "系统级"
+startup_readonly:
+  en: "Read-only"
+  zh-CN: "只读"
+startup_denied_title:
+  en: "Login items can't be read"
+  zh-CN: "读不到登录项"
+startup_denied_desc:
+  en: "Allow PC Specs to control System Events in System Settings → Privacy & Security → Automation, then refresh."
+  zh-CN: "请在「系统设置 → 隐私与安全性 → 自动化」里允许 PC Specs 控制“系统事件”，然后刷新。"
+startup_denied_open:
+  en: "Open Automation settings"
+  zh-CN: "打开“自动化”设置"
+startup_turned_on:
+  en: "“%{name}” is on. It starts from the next login."
+  zh-CN: "已打开“%{name}”，下次登录时生效。"
+startup_turned_off:
+  en: "“%{name}” is off. It won't start from the next login."
+  zh-CN: "已关闭“%{name}”，下次登录起不会再启动。"
+startup_failed:
+  en: "Couldn't change “%{name}”: %{error}"
+  zh-CN: "无法修改“%{name}”：%{error}"

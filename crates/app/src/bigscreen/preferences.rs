@@ -1,4 +1,4 @@
-//! 设置页「监控大屏」：最上面是随设置实时变化的预览，下面依次是显示、外观、布局。
+//! 设置页「监控大屏」：标题下面固定着随设置实时变化的预览，往下滚动依次是显示、外观、布局。
 
 use super::config::{
     BigScreenSettings, CELL_RANGE, ChartPref, Density, Preset, Rank, SCALE_RANGE, SCALE_STEP,
@@ -24,8 +24,10 @@ use gpui_kit::{
 use pc_specs_core::util::guarded;
 use rust_i18n::t;
 
-/// 预览框最大能占多大（逻辑像素）。横屏、竖屏、超宽屏都按这个框等比缩进去。
-const PREVIEW_BOX: (f32, f32) = (560., 360.);
+/// 预览框高度占窗口高度的比例，以及它的上下限（逻辑像素）。
+/// 预览固定在页面上方，窗口矮的时候要把空间让给下面的设置。
+const PREVIEW_HEIGHT_RATIO: f32 = 0.24;
+const PREVIEW_HEIGHT_RANGE: (f32, f32) = (130., 200.);
 /// 预览按「短边 720」的屏幕排版，字号和疏密都和这个分辨率的真实大屏一样。
 const PREVIEW_SHORT_SIDE: f32 = 720.;
 
@@ -71,14 +73,20 @@ impl Render for BigScreenPage {
             self.title
                 .update(cx, |input, cx| input.set_value(wanted, window, cx));
         }
+        let window_height = window.viewport_size().height.as_f32();
         guarded("render big screen settings", || {
-            content(&self.state, &self.title, cx)
+            content(&self.state, &self.title, window_height, cx)
         })
         .unwrap_or_else(|| div().into_any_element())
     }
 }
 
-fn content(state: &Entity<AppState>, title: &Entity<InputState>, cx: &App) -> AnyElement {
+fn content(
+    state: &Entity<AppState>,
+    title: &Entity<InputState>,
+    window_height: f32,
+    cx: &App,
+) -> AnyElement {
     let s = state.read(cx);
     let cfg = &s.settings.bigscreen;
     let open = super::is_open(cx);
@@ -115,13 +123,13 @@ fn content(state: &Entity<AppState>, title: &Entity<InputState>, cx: &App) -> An
             .into_any_element(),
     ];
 
-    ui::page(
+    ui::page_pinned(
         "page-big-screen",
         t!("bs_title").into_owned(),
         Some(t!("bs_description").into_owned().into()),
         actions,
+        preview_panel(s, state, window_height, cx),
         vec![
-            preview_section(s, state, cx).into_any_element(),
             display_section(state, cfg, cx).into_any_element(),
             appearance_section(state, title, cfg, cx).into_any_element(),
             layout_section(state, cfg, cx).into_any_element(),
@@ -133,31 +141,59 @@ fn content(state: &Entity<AppState>, title: &Entity<InputState>, cx: &App) -> An
 
 // ---- 预览 -------------------------------------------------------------------
 
-fn preview_section(s: &AppState, state: &Entity<AppState>, cx: &App) -> impl IntoElement {
+/// 固定在页面上方的预览：左边是缩小的大屏，右边是屏幕比例和一句说明。
+fn preview_panel(
+    s: &AppState,
+    state: &Entity<AppState>,
+    window_height: f32,
+    cx: &App,
+) -> AnyElement {
     let cfg = &s.settings.bigscreen;
-    let screen = guarded("render preview", || preview(s, cfg, cx)).unwrap_or_else(div);
-    ui::section("bs-preview", t!("bs_preview").into_owned()).child(
-        v_flex()
-            .gap_3()
-            .items_start()
-            .child(screen)
-            .child(choice(
-                state,
-                "bs-shape",
-                t!("bs_shape").into_owned(),
-                Shape::ALL
-                    .into_iter()
-                    .map(|shape| (shape, shape.title()))
-                    .collect(),
-                cfg.preview,
-                |c, v| c.preview = v,
-            ))
-            .child(ui::muted(t!("bs_preview_hint").into_owned(), cx).text_xs()),
-    )
+    let box_height = (window_height * PREVIEW_HEIGHT_RATIO)
+        .clamp(PREVIEW_HEIGHT_RANGE.0, PREVIEW_HEIGHT_RANGE.1);
+    let box_size = (box_height * 16. / 9., box_height);
+    let screen = guarded("render preview", || preview(s, cfg, box_size, cx)).unwrap_or_else(div);
+    // 比例选项会随窗口变窄自动换行，不会把预览挤出页面。
+    let shapes = h_flex()
+        .flex_wrap()
+        .gap_2()
+        .children(Shape::ALL.into_iter().enumerate().map(|(index, shape)| {
+            let state = state.clone();
+            Button::new(SharedString::from(format!("bs-shape-{index}")))
+                .small()
+                .outline()
+                .label(shape.title())
+                .selected(cfg.preview == shape)
+                .on_click(move |_, _, cx| edit(&state, |c| c.preview = shape, cx))
+        }));
+    h_flex()
+        .w_full()
+        .items_center()
+        .gap_4()
+        .p_3()
+        .rounded(cx.theme().radius_lg)
+        .bg(cx.theme().tokens.group_box)
+        .child(div().flex_shrink_0().child(screen))
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_semibold()
+                        .child(t!("bs_preview").into_owned()),
+                )
+                .child(ui::muted(t!("bs_shape").into_owned(), cx).text_xs())
+                .child(shapes)
+                .child(ui::muted(t!("bs_preview_hint").into_owned(), cx).text_xs()),
+        )
+        .into_any_element()
 }
 
 /// 把一整块屏幕缩进一个小框：按真实大屏的参考分辨率排版，再整体缩小来画。
-fn preview(s: &AppState, cfg: &BigScreenSettings, cx: &App) -> Div {
+fn preview(s: &AppState, cfg: &BigScreenSettings, box_size: (f32, f32), cx: &App) -> Div {
     let (long, short) = cfg.preview.ratio();
     let ratio = long / short;
     let (width, height) = if ratio >= 1. {
@@ -165,7 +201,7 @@ fn preview(s: &AppState, cfg: &BigScreenSettings, cx: &App) -> Div {
     } else {
         (PREVIEW_SHORT_SIDE, PREVIEW_SHORT_SIDE / ratio)
     };
-    let factor = (PREVIEW_BOX.0 / width).min(PREVIEW_BOX.1 / height);
+    let factor = (box_size.0 / width).min(box_size.1 / height);
     let mono = cfg
         .theme
         .palette()
@@ -483,12 +519,14 @@ fn theme_card(state: &Entity<AppState>, id: ThemeId, selected: bool, cx: &App) -
 
 /// 「− 100% +」：每按一下改一个步长，到头了按钮变灰。
 fn scale_row(state: &Entity<AppState>, value: u32, cx: &App) -> AnyElement {
-    let button = |name: &'static str, icon: IconName, enabled: bool, next: u32| {
+    let button = |name: &'static str, icon: IconName, tip: String, enabled: bool, next: u32| {
         let state = state.clone();
         Button::new(name)
             .small()
             .outline()
             .icon(icon)
+            .accessibility_label(tip.clone())
+            .tooltip(tip)
             .disabled(!enabled)
             .on_click(move |_, _, cx| edit(&state, |c| c.scale = next, cx))
     };
@@ -510,6 +548,7 @@ fn scale_row(state: &Entity<AppState>, value: u32, cx: &App) -> AnyElement {
                 .child(button(
                     "bs-scale-down",
                     IconName::Minus,
+                    t!("common_decrease").into_owned(),
                     value > *SCALE_RANGE.start(),
                     value.saturating_sub(SCALE_STEP),
                 ))
@@ -524,6 +563,7 @@ fn scale_row(state: &Entity<AppState>, value: u32, cx: &App) -> AnyElement {
                 .child(button(
                     "bs-scale-up",
                     IconName::Plus,
+                    t!("common_increase").into_owned(),
                     value < *SCALE_RANGE.end(),
                     value + SCALE_STEP,
                 )),
@@ -645,6 +685,8 @@ fn widget_row(
                 .ghost()
                 .small()
                 .icon(IconName::ArrowUp)
+                .accessibility_label(t!("common_move_up").into_owned())
+                .tooltip(t!("common_move_up").into_owned())
                 .on_click(move |_, _, cx| edit(&state, |c| c.move_widget(kind, true), cx)),
         );
     }
@@ -655,6 +697,8 @@ fn widget_row(
                 .ghost()
                 .small()
                 .icon(IconName::ArrowDown)
+                .accessibility_label(t!("common_move_down").into_owned())
+                .tooltip(t!("common_move_down").into_owned())
                 .on_click(move |_, _, cx| edit(&state, |c| c.move_widget(kind, false), cx)),
         );
     }

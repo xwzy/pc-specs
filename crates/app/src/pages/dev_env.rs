@@ -32,7 +32,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         .small()
         .outline()
         .icon(IconName::Copy)
-        .label(t!("common_copy").into_owned())
+        .label(t!("dev_copy_summary").into_owned())
         .on_click(move |_, _, cx| {
             let text = summary.clone();
             copy_state.update(cx, |s, cx| s.copy_to_clipboard(text, cx));

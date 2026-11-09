@@ -76,7 +76,12 @@ impl Metric {
     }
 
     pub fn needs_processes(self) -> bool {
-        matches!(self, Self::Cpu | Self::Memory | Self::Storage)
+        match self {
+            Self::Cpu | Self::Memory | Self::Storage => true,
+            // 网络面板要按进程排流量；系统不支持就没有进程可排，也就不用采样。
+            Self::Network => pc_specs_core::process_net::SUPPORTED,
+            _ => false,
+        }
     }
 
     /// 这个指标在菜单栏上可以展示的内容，第一项是默认值。
@@ -85,7 +90,7 @@ impl Metric {
             Self::Cpu | Self::Gpu => &[Show::Auto],
             Self::Memory => &[Show::Auto, Show::Used, Show::Free],
             Self::Storage => &[Show::Auto, Show::Free, Show::Used, Show::Io],
-            Self::Temperature => &[Show::Auto, Show::Hottest],
+            Self::Temperature => &[Show::Auto, Show::Hottest, Show::Fan],
             Self::Network => &[Show::Auto, Show::Down, Show::Up],
             Self::Battery => &[Show::Auto, Show::Remaining],
         }
@@ -117,12 +122,22 @@ pub enum Show {
     Free,
     Io,
     Hottest,
+    /// 转得最快的那把风扇的转速。
+    Fan,
     Down,
     Up,
     Remaining,
 }
 
 impl Show {
+    /// 菜单栏上的小标签：个别读数不是指标默认的那个（比如风扇转速），换成它自己的缩写。
+    pub fn bar_label(self, metric: Metric) -> &'static str {
+        match self {
+            Self::Fan => "FAN",
+            _ => metric.label(),
+        }
+    }
+
     /// 设置页里这个选项的名字；`Auto` 的含义随指标而变。
     pub fn title(self, metric: Metric) -> String {
         let key = match (self, metric) {
@@ -134,6 +149,7 @@ impl Show {
             (Self::Free, _) => "bar_show_free",
             (Self::Io, _) => "bar_show_io",
             (Self::Hottest, _) => "bar_show_hottest",
+            (Self::Fan, _) => "bar_show_fan",
             (Self::Down, _) => "bar_download",
             (Self::Up, _) => "bar_upload",
             (Self::Remaining, _) => "bar_show_remaining",

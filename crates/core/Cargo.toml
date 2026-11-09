@@ -20,23 +20,37 @@ whoami = "2"
 sys-locale = "0.3"
 battery = "0.7"
 parking_lot = "0.13"
+# 存储空间分析：并行遍历目录树。
+rayon = "1"
+# 清理功能要知道各系统的个人文件夹、缓存目录在哪。
+dirs = "7"
 tracing = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# 网络延迟探测：连接前要先把套接字绑到指定的物理网卡上，标准库做不到。
+socket2 = { version = "0.6", features = ["all"] }
 # 查询公网 IP 的 HTTPS 客户端（rustls，不依赖系统 OpenSSL）。
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # 本地 HTTP 采集服务（局域网拉取本机指标）。只开必要 features 控制体积。
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "matched-path"] }
 tower-http = { version = "0.7", default-features = false, features = ["cors", "limit", "timeout"] }
+# 启动项管理：读 macOS 的 launchd 配置（XML 和二进制 plist 都认）。
+plist = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.18"
+# 启动项管理：读写开机自启的注册表项。
+winreg = "0.56"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
     "Win32_UI_HiDpi",
 ] }

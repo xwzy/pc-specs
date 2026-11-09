@@ -13,7 +13,8 @@ use gpui_kit::{
     AnyElement, Div, Hsla, IntoElement as _, ParentElement as _, Styled as _, div,
     prelude::FluentBuilder as _,
 };
-use pc_specs_core::model::{BatteryInfo, CpuInfo, StorageInfo};
+use pc_specs_core::model::{BatteryInfo, CpuInfo, MonitorTick, StorageInfo};
+use pc_specs_core::modules::sensors;
 use rust_i18n::t;
 use std::collections::HashSet;
 
@@ -385,29 +386,36 @@ fn temperature(c: &Ctx, rect: Rect) -> AnyElement {
     let tick = app.latest.as_ref();
     let hottest = tick.and_then(data::headline_temperature);
     let unit = app.settings.temp_unit;
-    let mut sensors: Vec<(&str, f32)> = tick
+    // CPU / GPU 的逐核读数已经折成了主读数和 GPU 温度，再逐个列出来只会把别的传感器挤出去。
+    let mut sensors: Vec<(String, f32)> = tick
         .map(|tick| {
             tick.temperatures
                 .iter()
                 .filter(|sensor| sensor.value.is_finite())
+                .filter(|sensor| {
+                    !sensors::is_cpu_core(&sensor.label) && !sensors::is_gpu_core(&sensor.label)
+                })
                 .map(|sensor| {
                     let name = if sensor.label.trim().is_empty() {
-                        sensor.source.as_str()
+                        sensor.source.clone()
                     } else {
-                        sensor.label.as_str()
+                        fmt::sensor_label(sensor)
                     };
                     (name, sensor.value)
                 })
                 .collect()
         })
         .unwrap_or_default();
+    if let Some(gpu) = tick.and_then(MonitorTick::gpu_temperature) {
+        sensors.push((t!("nav_gpu").into_owned(), gpu));
+    }
     sensors.sort_by(|a, b| b.1.total_cmp(&a.1));
     let mut seen = HashSet::new();
     let facts = sensors
         .into_iter()
-        .filter(|(name, _)| seen.insert(*name))
+        .filter(|(name, _)| seen.insert(name.clone()))
         .take(8)
-        .map(|(name, value)| (name.to_string(), app.settings.temp(value)))
+        .map(|(name, value)| (name, app.settings.temp(value)))
         .collect();
     let gauge = Gauge {
         fraction: hottest
@@ -465,13 +473,8 @@ fn battery_facts(c: &Ctx, battery: &BatteryInfo) -> Vec<(String, String)> {
             format!("{:.1} W", power.unsigned_abs() as f64 / 1000.),
         ));
     }
-    if let (Some(full), Some(design)) = (battery.full_capacity_mwh, battery.design_capacity_mwh)
-        && design > 0
-    {
-        facts.push((
-            t!("bat_health").into_owned(),
-            fmt::percent(full as f32 / design as f32 * 100.),
-        ));
+    if let Some(health) = battery.health_percent {
+        facts.push((t!("bat_health").into_owned(), fmt::percent(health)));
     }
     if let Some(cycles) = battery.cycle_count {
         facts.push((t!("bat_cycle").into_owned(), cycles.to_string()));
@@ -677,10 +680,7 @@ fn system_facts(c: &Ctx) -> Vec<(String, String)> {
         t!("spec_hostname").into_owned(),
         snapshot.host.hostname.clone(),
     );
-    push(
-        t!("nav_os").into_owned(),
-        format!("{} {}", snapshot.os.name, snapshot.os.version),
-    );
+    push(t!("nav_os").into_owned(), fmt::os_title(&snapshot.os));
     push(t!("spec_kernel").into_owned(), snapshot.os.kernel.clone());
     push(t!("spec_arch").into_owned(), snapshot.os.arch.clone());
     let uptime = if snapshot.host.boot_time > 0 {

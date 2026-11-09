@@ -24,12 +24,12 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
         )
     } else {
         (
-            Some(SharedString::from(
-                t!("count_found", n = gpus.len()).into_owned(),
-            )),
+            // 只有一块 GPU 时「共 1 项」没有信息量。
+            (gpus.len() > 1)
+                .then(|| SharedString::from(t!("count_found", n = gpus.len()).into_owned())),
             gpus.iter()
                 .enumerate()
-                .map(|(i, g)| card(i, g, s, cx))
+                .map(|(i, g)| card(i, g, gpus.len() > 1, s, cx))
                 .collect(),
         )
     };
@@ -43,7 +43,7 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
     )
 }
 
-fn card(index: usize, g: &GpuInfo, s: &AppState, cx: &App) -> AnyElement {
+fn card(index: usize, g: &GpuInfo, numbered: bool, s: &AppState, cx: &App) -> AnyElement {
     let settings = &s.settings;
     let palette = chart::palette(cx);
     let kind = if g.is_discrete {
@@ -85,6 +85,7 @@ fn card(index: usize, g: &GpuInfo, s: &AppState, cx: &App) -> AnyElement {
                 Some((0.0, 100.0)),
                 palette[3],
                 |v| format!("{v:.0}%"),
+                "%",
             )));
     }
 
@@ -100,31 +101,17 @@ fn card(index: usize, g: &GpuInfo, s: &AppState, cx: &App) -> AnyElement {
         ));
     }
 
-    let items = vec![
-        (t!("spec_vendor").into_owned(), g.vendor.clone()),
-        (t!("spec_brand").into_owned(), g.name.clone()),
-        (t!("spec_backend").into_owned(), g.backend.clone()),
+    // 厂商 / 图形 API / 类型已经是上面的标签，型号是卡片标题，占用和显存是上面的进度条，
+    // 这里只列剩下的，不重复。
+    let mut items = vec![
         (
             t!("spec_driver").into_owned(),
             g.driver.clone().unwrap_or_default(),
         ),
         (
-            t!("gpu_vram_total").into_owned(),
-            g.vram_total_bytes
-                .map_or(String::new(), |b| settings.bytes(b)),
-        ),
-        (
-            t!("gpu_vram_used").into_owned(),
-            g.vram_used_bytes
-                .map_or(String::new(), |b| settings.bytes(b)),
-        ),
-        (
-            t!("gpu_utilization").into_owned(),
-            g.utilization.map_or(String::new(), fmt::percent),
-        ),
-        (
             t!("spec_temp").into_owned(),
-            g.temperature_c.map_or(String::new(), |v| settings.temp(v)),
+            s.gpu_temperature(g)
+                .map_or(String::new(), |v| settings.temp(v)),
         ),
         (
             t!("gpu_power").into_owned(),
@@ -134,44 +121,54 @@ fn card(index: usize, g: &GpuInfo, s: &AppState, cx: &App) -> AnyElement {
             t!("spec_pcie").into_owned(),
             g.pcie_link.clone().unwrap_or_default(),
         ),
-        (t!("spec_kind").into_owned(), kind),
         (
             t!("spec_cores").into_owned(),
             g.cores.map_or(String::new(), |c| c.to_string()),
         ),
     ];
-    content = content.child(ui::spec_list(items));
+    // 只知道显存总量、不知道已用量时，上面没有进度条，总量得在这里补上。
+    if g.vram_used_bytes.is_none()
+        && let Some(total) = g.vram_total_bytes.filter(|total| *total > 0)
+    {
+        items.insert(
+            0,
+            (t!("gpu_vram_total").into_owned(), settings.bytes(total)),
+        );
+    }
+    content = content.child(ui::spec_list(items, cx));
 
+    // 极客面板只放上面没有的原始值（驱动、PCIe 已经在规格里）。
     if settings.geek_mode {
         content = content.child(
             v_flex()
                 .gap_2()
                 .child(ui::muted(t!("gpu_geek_panel").into_owned(), cx))
-                .child(ui::spec_list(vec![
-                    ("index".to_string(), g.index.to_string()),
-                    ("vendor (raw)".to_string(), g.vendor.clone()),
-                    (
-                        "device type".to_string(),
-                        if g.is_discrete {
-                            "DiscreteGpu"
-                        } else {
-                            "IntegratedGpu"
-                        }
-                        .to_string(),
-                    ),
-                    ("driver".to_string(), g.driver.clone().unwrap_or_default()),
-                    (
-                        "pcie link".to_string(),
-                        g.pcie_link.clone().unwrap_or_default(),
-                    ),
-                ])),
+                .child(ui::spec_list(
+                    vec![
+                        (t!("gpu_geek_index").into_owned(), g.index.to_string()),
+                        (t!("gpu_geek_vendor_raw").into_owned(), g.vendor.clone()),
+                        (
+                            t!("gpu_geek_device_type").into_owned(),
+                            if g.is_discrete {
+                                "DiscreteGpu"
+                            } else {
+                                "IntegratedGpu"
+                            }
+                            .to_string(),
+                        ),
+                    ],
+                    cx,
+                )),
         );
     }
 
-    ui::section(
-        SharedString::from(format!("gpu-{index}")),
-        format!("[{}] {}", g.index, g.name),
-    )
-    .child(content)
-    .into_any_element()
+    // 多块 GPU 时用序号区分；只有一块就直接写型号。
+    let title = if numbered {
+        format!("[{}] {}", g.index, g.name)
+    } else {
+        g.name.clone()
+    };
+    ui::section(SharedString::from(format!("gpu-{index}")), title)
+        .child(content)
+        .into_any_element()
 }

@@ -7,12 +7,13 @@ use crate::state::{AppState, Page};
 use crate::{fmt, ui};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Selectable as _, Side, Sizable as _, StyledExt as _, Theme, TitleBar,
+    ActiveTheme as _, Collapsible, Icon, Selectable as _, Side, Sizable as _, StyledExt as _,
+    Theme, TitleBar,
     button::{Button, ButtonVariants as _},
     h_flex,
     separator::Separator,
     sidebar::{
-        Sidebar, SidebarCollapsible, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
+        Sidebar, SidebarCollapsible, SidebarHeader, SidebarItem, SidebarMenu, SidebarMenuItem,
         SidebarToggleButton,
     },
     status_bar::StatusBar,
@@ -20,9 +21,10 @@ use gpui_kit::component::{
 };
 use gpui_kit::{Action, App, KeyBinding};
 use gpui_kit::{
-    AppContext as _, Bounds, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, Styled as _, Subscription, Window, WindowBounds, WindowOptions,
-    actions, div, point, prelude::FluentBuilder as _, px, size,
+    AppContext as _, Bounds, Context, ElementId, Entity, FocusHandle, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Window, WindowBounds, WindowOptions, actions, div, point,
+    prelude::FluentBuilder as _, px, size,
 };
 #[cfg(target_os = "macos")]
 use gpui_kit::{Menu, MenuItem};
@@ -43,8 +45,14 @@ actions!(
 );
 
 const APP_ID: &str = "com.xwzy.pc-specs";
-const DEFAULT_SIZE: (f32, f32) = (1180.0, 760.0);
+// 高度留够：侧栏的全部入口要在默认窗口里不用滚动就能看到。
+const DEFAULT_SIZE: (f32, f32) = (1180.0, 800.0);
 const MIN_SIZE: (f32, f32) = (920.0, 600.0);
+/// 侧栏展开 / 收起（图标栏）时的宽度，页面据此算出自己的可用宽度。
+const SIDEBAR_WIDTH: f32 = 224.0;
+const SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
+/// 页面左右各 24px 的内边距。
+const PAGE_PADDING: f32 = 48.0;
 
 pub fn init(cx: &mut App) {
     crate::menubar::panel::init(cx);
@@ -130,6 +138,67 @@ pub struct Workspace {
     _subscriptions: Vec<Subscription>,
 }
 
+/// 侧栏分组。比自带的 `SidebarGroup` 紧凑：小号标题、收紧的行距，标题也可以省略，
+/// 这样默认窗口高度下全部入口都能直接看到，不用在侧栏里再滚动。
+#[derive(Clone)]
+struct NavGroup {
+    label: Option<SharedString>,
+    menu: SidebarMenu,
+    collapsed: bool,
+}
+
+impl NavGroup {
+    fn new(label: Option<String>, menu: SidebarMenu) -> Self {
+        Self {
+            label: label.map(SharedString::from),
+            menu,
+            collapsed: false,
+        }
+    }
+}
+
+impl Collapsible for NavGroup {
+    fn is_collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+}
+
+impl SidebarItem for NavGroup {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        let collapsed = self.collapsed;
+        let labeled = self.label.is_some();
+        let label_color = cx.theme().sidebar_foreground.opacity(0.7);
+        let divider = cx.theme().sidebar_border;
+        v_flex()
+            // 展开时靠标题隔开各组；收成图标栏后标题没了，改用一条细线。
+            .when(labeled && !collapsed, |this| this.pt_3())
+            .when(labeled && collapsed, |this| {
+                this.mt_2().pt_2().border_t_1().border_color(divider)
+            })
+            .when_some(self.label.filter(|_| !collapsed), |this, label| {
+                this.child(
+                    h_flex()
+                        .h_6()
+                        .px_2()
+                        .text_xs()
+                        .text_color(label_color)
+                        .child(label),
+                )
+            })
+            .child(self.menu.collapsed(collapsed).render(id, window, cx))
+    }
+}
+
 impl Workspace {
     pub fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let appearance_state = state.clone();
@@ -175,9 +244,12 @@ impl Workspace {
     fn render_sidebar(&self, current: Page, cx: &App) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed;
         let (accent, on_accent) = (cx.theme().primary, cx.theme().primary_foreground);
-        let group = |label: String, pages: &[Page]| {
-            SidebarGroup::new(label).child(
-                SidebarMenu::new().children(pages.iter().map(|page| self.nav_item(*page, current))),
+        let group = |label: Option<String>, pages: &[Page]| {
+            NavGroup::new(
+                label,
+                SidebarMenu::new()
+                    .gap_0p5()
+                    .children(pages.iter().map(|page| self.nav_item(*page, current))),
             )
         };
         Sidebar::new("main-sidebar")
@@ -212,23 +284,32 @@ impl Workspace {
                         )
                     }),
             )
+            // 第一组是日常看数据的入口，不加标题。
             .child(group(
-                t!("nav_group_overview").into_owned(),
-                &[
-                    Page::Dashboard,
-                    Page::Monitor,
-                    Page::Processes,
-                    Page::MenuBar,
-                    Page::BigScreen,
-                ],
+                None,
+                &[Page::Dashboard, Page::Monitor, Page::Processes],
+            ))
+            // 顶栏监控与监控大屏是「把监控放到桌面上」的设置页，和看数据的页面分开。
+            .child(group(
+                Some(t!("nav_group_desktop").into_owned()),
+                &[Page::MenuBar, Page::BigScreen],
             ))
             .child(group(
-                t!("nav_group_hardware").into_owned(),
+                Some(t!("nav_group_hardware").into_owned()),
                 &Page::HARDWARE,
             ))
             .child(group(
-                t!("nav_group_system").into_owned(),
+                Some(t!("nav_group_system").into_owned()),
                 &[Page::Os, Page::DevEnv],
+            ))
+            .child(group(
+                Some(t!("nav_group_tools").into_owned()),
+                // 没有「应用」可管的系统（Linux）不摆这一页。
+                if pc_specs_core::apps::SUPPORTED {
+                    &[Page::Rules, Page::Startup, Page::Apps][..]
+                } else {
+                    &[Page::Rules, Page::Startup][..]
+                },
             ))
     }
 
@@ -239,6 +320,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let dark = cx.theme().mode.is_dark();
+        // 按钮上画的是「点了会变成什么」，提示文字也说清楚。
+        let theme_hint = if dark {
+            t!("theme_switch_light").into_owned()
+        } else {
+            t!("theme_switch_dark").into_owned()
+        };
         let state = self.state.clone();
         let refresh_state = state.clone();
         let export_state = state.clone();
@@ -252,6 +339,7 @@ impl Workspace {
                         SidebarToggleButton::new()
                             .side(Side::Left)
                             .collapsed(self.sidebar_collapsed)
+                            .accessibility_label(t!("nav_toggle_sidebar").into_owned())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.sidebar_collapsed = !this.sidebar_collapsed;
                                 cx.notify();
@@ -282,7 +370,8 @@ impl Workspace {
                             .small()
                             .icon(IconName::RefreshCw)
                             .loading(refreshing)
-                            .tooltip(t!("common_refresh").into_owned())
+                            .accessibility_label(t!("common_refresh").into_owned())
+                            .tooltip_with_action(t!("common_refresh").into_owned(), &Refresh, None)
                             .on_click(move |_, _, cx| {
                                 refresh_state.update(cx, |s, cx| s.refresh(cx));
                             }),
@@ -292,7 +381,8 @@ impl Workspace {
                             .ghost()
                             .small()
                             .icon(if dark { IconName::Sun } else { IconName::Moon })
-                            .tooltip(t!("settings_theme").into_owned())
+                            .accessibility_label(theme_hint.clone())
+                            .tooltip(theme_hint)
                             .on_click(move |_, _, cx| {
                                 state.update(cx, |s, cx| {
                                     s.update_settings(
@@ -314,7 +404,8 @@ impl Workspace {
                             .small()
                             .icon(Page::Settings.icon())
                             .selected(current == Page::Settings)
-                            .tooltip(Page::Settings.title())
+                            .accessibility_label(Page::Settings.title())
+                            .tooltip_with_action(Page::Settings.title(), &OpenSettings, None)
                             .on_click(move |_, _, cx| {
                                 settings_state.update(cx, |s, cx| s.set_page(Page::Settings, cx));
                             }),
@@ -334,40 +425,80 @@ impl Workspace {
         }
         .into_owned();
 
-        let metric = |label: &'static str, value: String| {
+        // 状态栏上的每一项都能点：直接跳到对应页面看详情。
+        let (foreground, hover_bg, radius) = (
+            cx.theme().foreground,
+            cx.theme().list_hover,
+            cx.theme().radius,
+        );
+        let state = self.state.clone();
+        let clickable = |id: &'static str, target: Page| {
+            let state = state.clone();
             h_flex()
+                .id(id)
+                .items_center()
                 .gap_1()
+                .px_1p5()
+                .rounded(radius)
+                .cursor_pointer()
+                .hover(move |this| this.bg(hover_bg))
+                .on_click(move |_, _, cx| {
+                    state.update(cx, |s, cx| s.set_page(target, cx));
+                })
+        };
+        let metric = |id: &'static str, label: String, value: String, target: Page| {
+            clickable(id, target)
                 .child(div().child(label))
-                .child(div().text_color(cx.theme().foreground).child(value))
+                .child(div().text_color(foreground).child(value))
         };
 
-        let mut left = h_flex().gap_4().items_center();
+        let mut left = h_flex().gap_1().items_center();
         match &s.latest {
             Some(tick) => {
                 let mem = fmt::ratio(tick.mem_used_bytes, tick.mem_total_bytes);
                 left = left
-                    .child(metric("CPU", fmt::percent(tick.cpu_overall)))
-                    .child(metric("MEM", fmt::percent(mem)))
                     .child(metric(
-                        "NET",
+                        "status-cpu",
+                        t!("nav_cpu").into_owned(),
+                        fmt::percent(tick.cpu_overall),
+                        Page::Cpu,
+                    ))
+                    .child(metric(
+                        "status-memory",
+                        t!("dash_card_memory").into_owned(),
+                        fmt::percent(mem),
+                        Page::Memory,
+                    ))
+                    .child(metric(
+                        "status-network",
+                        t!("dash_card_network").into_owned(),
                         format!(
                             "↓{} ↑{}",
                             settings.rate(tick.net_rx_bps),
                             settings.rate(tick.net_tx_bps)
                         ),
+                        Page::Network,
                     ));
                 if let Some(temp) = tick.max_temperature() {
-                    left = left.child(metric("TEMP", settings.temp(temp)));
+                    left = left.child(metric(
+                        "status-temp",
+                        t!("dash_card_temp").into_owned(),
+                        settings.temp(temp),
+                        Page::Sensors,
+                    ));
                 }
             }
             None => {
-                left = left.child(div().child(t!("common_loading").into_owned()));
+                left = left.child(div().px_1p5().child(t!("common_loading").into_owned()));
             }
         }
 
         StatusBar::new()
             .left(left)
-            .right(ui::level_tag(level, health_text).small())
+            .right(
+                clickable("status-health", Page::Dashboard)
+                    .child(ui::level_tag(level, health_text).small()),
+            )
             .when(s.paused, |bar| {
                 bar.right(ui::chip(t!("monitor_paused").into_owned()))
             })
@@ -380,7 +511,14 @@ impl Render for Workspace {
             let s = self.state.read(cx);
             (s.page, s.refreshing)
         };
-        let content = pages::render(current, &self.state, &self.pages, window, cx);
+        // 页面按自己的可用宽度决定网格列数，窄了就少放几列。
+        let sidebar_width = if self.sidebar_collapsed {
+            SIDEBAR_COLLAPSED_WIDTH
+        } else {
+            SIDEBAR_WIDTH
+        };
+        let content_width = window.viewport_size().width.as_f32() - sidebar_width - PAGE_PADDING;
+        let content = pages::render(current, &self.state, &self.pages, content_width, cx);
 
         v_flex()
             .id("workspace")
@@ -496,7 +634,7 @@ pub fn open_main_window(cx: &mut App) {
             // 窗口可能关了很久，先把会变的几项补采一遍。
             state.update(cx, |s, cx| {
                 s.main_window = Some(handle);
-                s.sync_process_feed(cx);
+                s.sync_feeds(cx);
                 s.refresh_live(cx);
             });
             cx.activate(true);
@@ -566,7 +704,7 @@ fn window_closed(cx: &mut App) {
             s.detail_window = None;
             s.detail_metric = None;
             s.highlight_metric(None);
-            s.sync_process_feed(cx);
+            s.sync_feeds(cx);
             cx.notify();
         });
     }
@@ -590,7 +728,7 @@ fn window_closed(cx: &mut App) {
         // 大屏关了（位置在关窗之前就记下了）：补存一次设置，进程采样按需要收缩。
         state.update(cx, |s, cx| {
             s.wall_window = None;
-            s.sync_process_feed(cx);
+            s.sync_feeds(cx);
             s.settings.save();
             cx.notify();
         });
@@ -598,7 +736,7 @@ fn window_closed(cx: &mut App) {
     if main_gone {
         state.update(cx, |s, cx| {
             s.main_window = None;
-            s.sync_process_feed(cx);
+            s.sync_feeds(cx);
             s.settings.save();
         });
     }

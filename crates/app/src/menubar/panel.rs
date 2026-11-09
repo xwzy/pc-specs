@@ -325,7 +325,7 @@ pub fn show(state: Entity<AppState>, metric: Metric, anchor: Option<Anchor>, cx:
                 s.detail_metric = Some(metric);
                 s.detail_closed = None;
                 s.highlight_metric(Some(metric));
-                s.sync_process_feed(cx);
+                s.sync_feeds(cx);
                 s.refresh_live(cx);
                 cx.notify();
             });

@@ -26,6 +26,13 @@ enum SortKey {
     Write,
 }
 
+/// 名称以外各列的固定宽度之和（px），名称列吃掉剩下的宽度。
+const FIXED_COLUMNS_WIDTH: f32 = 72. + 84. + 110. + 120. + 120.;
+/// 名称列的最小宽度（px）。
+const MIN_NAME_WIDTH: f32 = 240.;
+/// 表格自己的滚动条与边框要留的余量（px），免得整张表比容器宽几像素、冒出横向滚动条。
+const TABLE_CHROME: f32 = 16.;
+
 const COLUMNS: [(&str, SortKey); 6] = [
     ("pid", SortKey::Pid),
     ("name", SortKey::Name),
@@ -44,6 +51,8 @@ struct ProcessDelegate {
     sort: (SortKey, ColumnSort),
     size_unit: SizeUnit,
     net_unit: NetUnit,
+    /// 名称列的宽度：随窗口宽度伸缩，让整张表铺满，而不是右边留一块空白。
+    name_width: f32,
 }
 
 impl ProcessDelegate {
@@ -56,6 +65,7 @@ impl ProcessDelegate {
             sort: (SortKey::Cpu, ColumnSort::Descending),
             size_unit: SizeUnit::default(),
             net_unit: NetUnit::default(),
+            name_width: MIN_NAME_WIDTH,
         }
     }
 
@@ -118,7 +128,7 @@ impl TableDelegate for ProcessDelegate {
             .resizable(false);
         let column = match key {
             SortKey::Pid => column.width(72.),
-            SortKey::Name => column.width(240.),
+            SortKey::Name => column.width(self.name_width),
             SortKey::Cpu => column.width(84.).text_right(),
             SortKey::Memory => column.width(110.).text_right(),
             SortKey::Read | SortKey::Write => column.width(120.).text_right(),
@@ -248,6 +258,20 @@ impl ProcessesPage {
         }
     }
 
+    /// 按页面可用宽度重新分配名称列的宽度。窗口每变一次大小都会调用，没变化就什么也不做。
+    pub fn set_content_width(&mut self, content_width: f32, cx: &mut Context<Self>) {
+        let name_width = (content_width - FIXED_COLUMNS_WIDTH - TABLE_CHROME)
+            .max(MIN_NAME_WIDTH)
+            .round();
+        self.table.update(cx, |table, cx| {
+            if (table.delegate().name_width - name_width).abs() < 1. {
+                return;
+            }
+            table.delegate_mut().name_width = name_width;
+            table.refresh(cx);
+        });
+    }
+
     /// 进程列表或单位变了就把新数据灌进表格；每个采样 tick 都会走到这里，所以先判断版本。
     fn sync(&mut self, cx: &mut Context<Self>) {
         let (rev, size_unit, net_unit) = {
@@ -289,7 +313,14 @@ impl Render for ProcessesPage {
             .into_any_element();
         ui::page_fill(
             t!("proc_title").into_owned(),
-            loaded.then(|| SharedString::from(t!("proc_count", n = count).into_owned())),
+            // CPU 一列以单核满载为 100%，多线程进程会超过 100%，在这里说明白。
+            loaded.then(|| {
+                SharedString::from(format!(
+                    "{} · {}",
+                    t!("proc_count", n = count),
+                    t!("proc_cpu_note")
+                ))
+            }),
             vec![search],
             DataTable::new(&self.table)
                 .bordered(false)

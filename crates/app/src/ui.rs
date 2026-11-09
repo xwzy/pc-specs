@@ -18,8 +18,9 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, App, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, div, prelude::FluentBuilder as _, rems,
+    SharedString, Styled as _, div, prelude::FluentBuilder as _, px, relative, rems,
 };
+use rust_i18n::t;
 
 fn page_header(
     title: impl Into<SharedString>,
@@ -59,7 +60,21 @@ fn page_header(
         )
 }
 
-/// 页面骨架：标题区 + 可滚动正文。`id` 决定滚动位置的归属，每个页面各自独立。
+/// 可滚动的正文区。`id` 决定滚动位置的归属，每个页面各自独立。
+fn page_body(id: &'static str, body: Vec<AnyElement>) -> impl IntoElement {
+    v_flex()
+        .id(id)
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scrollbar()
+        .items_stretch()
+        .gap_4()
+        .px_6()
+        .pb_6()
+        .children(body)
+}
+
+/// 页面骨架：标题区 + 可滚动正文。
 pub fn page(
     id: &'static str,
     title: impl Into<SharedString>,
@@ -72,19 +87,34 @@ pub fn page(
         .size_full()
         .min_h_0()
         .child(page_header(title, subtitle, actions, cx))
-        .child(
-            v_flex()
-                .id(id)
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scrollbar()
-                .items_stretch()
-                .gap_4()
-                .px_6()
-                .pb_6()
-                .children(body),
-        )
+        .child(page_body(id, body))
         .into_any_element()
+}
+
+/// 页面骨架：标题区 + 固定在上方的 `pinned`（比如实时预览）+ 可滚动正文。
+/// 调整设置时预览不会跟着滚出视野，改一项、看一眼。
+pub fn page_pinned(
+    id: &'static str,
+    title: impl Into<SharedString>,
+    subtitle: Option<SharedString>,
+    actions: Vec<AnyElement>,
+    pinned: AnyElement,
+    body: Vec<AnyElement>,
+    cx: &App,
+) -> AnyElement {
+    v_flex()
+        .size_full()
+        .min_h_0()
+        .child(page_header(title, subtitle, actions, cx))
+        .child(div().w_full().flex_shrink_0().px_6().pb_4().child(pinned))
+        .child(page_body(id, body))
+        .into_any_element()
+}
+
+/// 按内容区宽度算网格列数：每列至少 `min_col` px，最多 `max` 列（列间距 16px）。
+pub fn columns(content_width: f32, min_col: f32, max: u16) -> u16 {
+    let fit = ((content_width + 16.0) / (min_col + 16.0)).floor();
+    (fit as u16).clamp(1, max.max(1))
 }
 
 /// 页面骨架：标题区 + 撑满剩余高度的正文。正文自己负责滚动（比如虚拟列表表格）。
@@ -113,18 +143,24 @@ pub fn plain_section(id: impl Into<ElementId>, title: impl Into<SharedString>) -
     GroupBox::new().id(id).title(title.into())
 }
 
-/// 规格键值列表（两列）。值为空时显示「—」。
-pub fn spec_list(items: Vec<(String, String)>) -> DescriptionList {
+/// 规格键值列表（两列）。系统没有给出的项（空串，或者 `fmt` 里用「—」占位的）不占位，
+/// 只在底部注明有几项缺失，避免一整屏「—」。
+pub fn spec_list(items: Vec<(String, String)>, cx: &App) -> AnyElement {
+    let is_missing = |value: &str| matches!(value.trim(), "" | "—");
+    let missing = items.iter().filter(|(_, value)| is_missing(value)).count();
     let mut list = DescriptionList::new().columns(2);
     for (label, value) in items {
-        let value = if value.trim().is_empty() {
-            "—".to_string()
-        } else {
-            value
-        };
-        list = list.item(label, value, 1);
+        if !is_missing(&value) {
+            list = list.item(label, value, 1);
+        }
     }
-    list
+    v_flex()
+        .gap_3()
+        .child(list)
+        .when(missing > 0, |this| {
+            this.child(muted(t!("spec_missing", n = missing).into_owned(), cx).text_xs())
+        })
+        .into_any_element()
 }
 
 pub fn level_color(level: Level, cx: &App) -> Hsla {
@@ -176,6 +212,43 @@ pub fn meter(
         .into_any_element()
 }
 
+/// 分段占比条：每一段按数值占总和的比例分宽度，总宽铺满，数值为 0 的段不画。
+pub fn stacked_bar(parts: &[(Hsla, u64)], cx: &App) -> gpui_kit::Div {
+    let total: u64 = parts.iter().map(|(_, n)| n).sum();
+    h_flex()
+        .w_full()
+        .h(px(10.))
+        .rounded_full()
+        .overflow_hidden()
+        .bg(cx.theme().muted)
+        .children(parts.iter().filter(|(_, n)| *n > 0).map(|(color, n)| {
+            div()
+                .h_full()
+                .w(relative(*n as f32 / total as f32))
+                .bg(*color)
+        }))
+}
+
+/// 图例里的一项：彩色圆点 + 名称 + 数值。
+pub fn legend_item(
+    color: Hsla,
+    label: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+    cx: &App,
+) -> gpui_kit::Div {
+    h_flex()
+        .items_center()
+        .gap_2()
+        .text_sm()
+        .child(div().size(px(8.)).rounded_full().bg(color))
+        .child(
+            div()
+                .text_color(cx.theme().muted_foreground)
+                .child(label.into()),
+        )
+        .child(div().font_medium().child(value.into()))
+}
+
 pub fn level_tag(level: Level, text: impl Into<SharedString>) -> Tag {
     match level {
         Level::Healthy => Tag::success(),
@@ -183,6 +256,18 @@ pub fn level_tag(level: Level, text: impl Into<SharedString>) -> Tag {
         Level::Critical => Tag::danger(),
     }
     .child(text.into())
+}
+
+/// 「在访达 / 资源管理器 / 文件管理器中显示」，各系统叫法不同。
+pub fn reveal_label() -> String {
+    if cfg!(target_os = "macos") {
+        t!("sa_act_reveal_mac")
+    } else if cfg!(windows) {
+        t!("sa_act_reveal_win")
+    } else {
+        t!("sa_act_reveal_other")
+    }
+    .into_owned()
 }
 
 /// 次要标签（类型、状态等）。

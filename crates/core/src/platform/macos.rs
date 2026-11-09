@@ -1,5 +1,5 @@
 use super::CpuDetails;
-use crate::model::{MemoryModule, MotherboardInfo, SensorReading};
+use crate::model::{MemoryBreakdown, MemoryModule, MotherboardInfo, SensorReading};
 use crate::util::{clean_dmi, run_stdout_timeout, sysctl};
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -42,6 +42,30 @@ pub(crate) fn profiler_first(data_type: &'static str) -> Option<Value> {
         .as_array()?
         .first()
         .cloned()
+}
+
+/// 「系统设置 → 电池」里的「最大容量」（%），取自 `SPPowerDataType`。台式机没有电池，读不到时为 `None`。
+pub(crate) fn battery_health_percent() -> Option<f32> {
+    maximum_capacity(&system_profiler("SPPowerDataType")?)
+}
+
+/// `SPPowerDataType` 里电池那一项的 `sppower_battery_health_maximum_capacity`（形如 `"93%"`）。
+fn maximum_capacity(profile: &Value) -> Option<f32> {
+    profile
+        .get("SPPowerDataType")?
+        .as_array()?
+        .iter()
+        .find_map(|item| {
+            item.get("sppower_battery_health_info")?
+                .get("sppower_battery_health_maximum_capacity")?
+                .as_str()
+        })?
+        .trim()
+        .trim_end_matches('%')
+        .trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|percent| *percent > 0.0 && *percent <= 200.0)
 }
 
 const ARM_FEATURES: &[&str] = &[
@@ -98,7 +122,8 @@ pub fn cpu_details() -> CpuDetails {
         numa_nodes: Some(1),
         base_hz: sysctl::uint("hw.cpufrequency").filter(|v| *v > 0),
         max_hz: sysctl::uint("hw.cpufrequency_max").filter(|v| *v > 0),
-        live_frequency: !is_arm,
+        // sysinfo 在 macOS 上给的是固定值（Apple 芯片是最高频率，Intel 是额定频率），不是实时频率。
+        live_frequency: false,
         virtualization: sysctl::uint("kern.hv_support").map(|v| v == 1),
     }
 }
@@ -243,10 +268,109 @@ fn parse_speed(s: &str) -> Option<u32> {
     s.split_whitespace().find_map(|w| w.parse::<u32>().ok())
 }
 
+/// 风扇、功率、电压、电流，以及 CPU / GPU 逐核温度（其余温度由 sysinfo 通过 HID 读取）。
 pub fn extra_sensors() -> Vec<SensorReading> {
-    Vec::new()
+    super::macos_smc::readings()
+}
+
+pub fn memory_breakdown() -> Option<MemoryBreakdown> {
+    super::macos_vm::breakdown()
+}
+
+unsafe extern "C" {
+    fn notify_register_check(name: *const std::ffi::c_char, out_token: *mut std::ffi::c_int)
+    -> u32;
+    fn notify_get_state(token: std::ffi::c_int, state: *mut u64) -> u32;
+}
+
+/// 系统的热压力等级，来自 `notify` 里的 `com.apple.system.thermalpressurelevel`
+/// （`OSThermalNotification.h` 的 `kOSThermalNotificationPressureLevelName`）：
+/// 0 正常、1 中等、2 较重、3 严重（已经在强制降频）、4 休眠。
+pub fn thermal_pressure() -> Option<u8> {
+    static TOKEN: std::sync::OnceLock<Option<std::ffi::c_int>> = std::sync::OnceLock::new();
+    let token = (*TOKEN.get_or_init(|| {
+        let mut token = 0;
+        // SAFETY: 名字以 NUL 结尾，输出参数是本地变量。
+        let status = unsafe {
+            notify_register_check(
+                c"com.apple.system.thermalpressurelevel".as_ptr(),
+                &mut token,
+            )
+        };
+        (status == 0).then_some(token)
+    }))?;
+    let mut state = 0_u64;
+    // SAFETY: `token` 是上面注册得到的，输出参数是本地变量。
+    let status = unsafe { notify_get_state(token, &mut state) };
+    (status == 0)
+        .then(|| u8::try_from(state).ok())
+        .flatten()
+        .filter(|level| *level <= 4)
+}
+
+/// 进程的 `phys_footprint`：「活动监视器」「内存」一列的口径，进程自己占着的物理内存，
+/// 含被压缩的部分，不含和别的进程共享的系统库。sysinfo 给的是驻留集（RSS），
+/// 语言服务器、浏览器这类进程会差出几十倍。别的用户的进程（root 的守护进程等）读不到。
+pub fn process_memory(pid: u32) -> Option<u64> {
+    // SAFETY: `rusage_info_v0` 是纯数字结构，全零是合法的初值。
+    let mut info: libc::rusage_info_v0 = unsafe { std::mem::zeroed() };
+    // SAFETY: 缓冲区是一个 `rusage_info_v0`，和 `RUSAGE_INFO_V0` 约定的版本一致。
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            pid as libc::c_int,
+            libc::RUSAGE_INFO_V0,
+            (&mut info as *mut libc::rusage_info_v0).cast(),
+        )
+    };
+    (status == 0).then_some(info.ri_phys_footprint)
 }
 
 pub fn desktop_env() -> Option<String> {
     Some("Aqua".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_maximum_capacity_is_read_from_the_battery_item() {
+        let profile = json!({"SPPowerDataType": [
+            {"_name": "spcharger_information"},
+            {
+                "_name": "spbattery_information",
+                "sppower_battery_health_info": {
+                    "sppower_battery_cycle_count": 64,
+                    "sppower_battery_health": "Good",
+                    "sppower_battery_health_maximum_capacity": "93%"
+                }
+            }
+        ]});
+        assert_eq!(maximum_capacity(&profile), Some(93.0));
+    }
+
+    #[test]
+    fn the_thermal_pressure_is_one_of_the_documented_levels() {
+        // 机器不同读出来的等级不同，能读到的话必须落在 0–4 里。
+        assert!(thermal_pressure().is_none_or(|level| level <= 4));
+    }
+
+    #[test]
+    fn a_desktop_or_an_unexpected_answer_gives_nothing() {
+        assert_eq!(maximum_capacity(&json!({"SPPowerDataType": []})), None);
+        assert_eq!(
+            maximum_capacity(&json!({"SPPowerDataType": [{"_name": "spcharger_information"}]})),
+            None
+        );
+        assert_eq!(maximum_capacity(&json!({})), None);
+        for text in ["", "n/a", "0%", "-5%", "900%"] {
+            let profile = json!({"SPPowerDataType": [{
+                "sppower_battery_health_info": {
+                    "sppower_battery_health_maximum_capacity": text
+                }
+            }]});
+            assert_eq!(maximum_capacity(&profile), None, "{text:?}");
+        }
+    }
 }

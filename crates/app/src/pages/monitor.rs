@@ -14,8 +14,10 @@ use rust_i18n::t;
 
 /// 图表区的统一高度。
 const CHART_HEIGHT: f32 = 10.0;
+/// 一张图表卡片的最小宽度（px），决定网格列数。
+const CHART_MIN_WIDTH: f32 = 400.0;
 
-pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
+pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &App) -> AnyElement {
     let settings = &s.settings;
     let palette = chart::palette(cx);
     let unit = settings.net_unit;
@@ -41,21 +43,26 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
     let latest = s.latest.as_ref();
 
     // ---- 操作区 ----
+    // 单看「1 分钟 / 5 分钟 / 10 分钟」不知道指什么，前面补一个名字。
     let range_state = state.clone();
-    let range = ui::segmented(
-        "monitor-range",
-        [1u32, 5, 10]
-            .into_iter()
-            .map(|m| (m, t!("unit_minutes", n = m).into_owned()))
-            .collect(),
-        settings.history_minutes,
-        move |minutes, cx| {
-            range_state.update(cx, |s, cx| {
-                s.update_settings(|v| v.history_minutes = minutes, cx)
-            });
-        },
-    )
-    .into_any_element();
+    let range = h_flex()
+        .items_center()
+        .gap_2()
+        .child(ui::muted(t!("monitor_range").into_owned(), cx))
+        .child(ui::segmented(
+            "monitor-range",
+            [1u32, 5, 10]
+                .into_iter()
+                .map(|m| (m, t!("unit_minutes", n = m).into_owned()))
+                .collect(),
+            settings.history_minutes,
+            move |minutes, cx| {
+                range_state.update(cx, |s, cx| {
+                    s.update_settings(|v| v.history_minutes = minutes, cx)
+                });
+            },
+        ))
+        .into_any_element();
 
     let pause_state = state.clone();
     let pause = Button::new("monitor-pause")
@@ -101,6 +108,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
             Some((0.0, 100.0)),
             palette[0],
             |v| format!("{v:.0}%"),
+            "%",
         ),
         cx,
     ));
@@ -118,6 +126,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
             Some((0.0, 100.0)),
             palette[1],
             |v| format!("{v:.0}%"),
+            "%",
         ),
         cx,
     ));
@@ -138,6 +147,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
                 t!("monitor_up").into_owned(),
             ),
             fmt::axis_label,
+            net_scale.name,
             cx,
         ),
         cx,
@@ -168,6 +178,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
                 t!("common_write").into_owned(),
             ),
             fmt::axis_label,
+            disk_scale.name,
             cx,
         ),
         cx,
@@ -198,6 +209,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
                     t!("dash_card_cpu").into_owned(),
                 ),
                 |v| format!("{v:.0}"),
+                temp_unit_name,
                 cx,
             ),
             cx,
@@ -207,8 +219,6 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
             "monitor-temp",
             t!("monitor_temp_unit", unit = temp_unit_name).into_owned(),
         )
-        .flex_1()
-        .min_w(rems(26.))
         .child(ui::muted(t!("monitor_no_temp").into_owned(), cx))
         .into_any_element()
     });
@@ -248,6 +258,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
                     (palette[3], palette[1]),
                     (first, second),
                     |v| format!("{v:.0}%"),
+                    "%",
                     cx,
                 )
             }
@@ -259,6 +270,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
                     Some((0.0, 100.0)),
                     palette[3],
                     |v| format!("{v:.0}%"),
+                    "%",
                 )
             }
         };
@@ -271,10 +283,11 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         ));
     }
 
-    let charts = h_flex()
+    // 图表卡片排成等宽的网格：宽窗口三列，默认两列，窄了单列，最后一行不会被拉成通栏。
+    let charts = div()
         .w_full()
-        .flex_wrap()
-        .items_stretch()
+        .grid()
+        .grid_cols(ui::columns(content_width, CHART_MIN_WIDTH, 3))
         .gap_4()
         .children(cards);
 
@@ -331,8 +344,6 @@ fn chart_card(
     _cx: &App,
 ) -> AnyElement {
     ui::section(id, title)
-        .flex_1()
-        .min_w(rems(26.))
         .child(
             v_flex()
                 .gap_2()

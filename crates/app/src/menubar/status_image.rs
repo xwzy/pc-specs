@@ -490,7 +490,9 @@ fn widest(item: &Item, settings: &Settings) -> f32 {
     if let Some(width) = lock(cache).get(&key).copied() {
         return width;
     }
-    let label = config.show_labels.then_some(item.metric.label());
+    let label = config
+        .show_labels
+        .then_some(item.show.bar_label(item.metric));
     let widest = data::widest(item.metric, item.show, settings)
         .into_iter()
         .map(|(value, second)| {
@@ -515,7 +517,9 @@ fn widest(item: &Item, settings: &Settings) -> f32 {
 fn build(item: &Item, settings: &Settings) -> (String, f32) {
     let config = &settings.menu_bar;
     let units = config.show_units;
-    let label = config.show_labels.then_some(item.metric.label());
+    let label = config
+        .show_labels
+        .then_some(item.show.bar_label(item.metric));
 
     let current = block(
         item.style,
@@ -571,10 +575,13 @@ pub struct Drawing {
 }
 
 impl Drawing {
+    // 只有 macOS 的菜单栏项拿它们比较「内容变没变」；其它平台只在测试里编译这个模块。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn svg(&self) -> &str {
         &self.svg
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn into_svg(self) -> String {
         self.svg
     }
@@ -653,7 +660,13 @@ mod tests {
         )
     }
 
+    // 这个模块只在 macOS 上用，字体写的是 Helvetica Neue / Arial。Linux 上没有 Arial，`sans-serif` 解析不到字体，
+    // 纯文字的样式会渲染成空位图，所以这条断言在 Linux 上不成立。
     #[test]
+    #[cfg_attr(
+        target_os = "linux",
+        ignore = "Linux 上没有 Helvetica Neue / Arial，文字渲染不出来"
+    )]
     fn all_styles_render_at_retina_resolution() {
         let settings = Settings::default();
         for metric in Metric::ALL {

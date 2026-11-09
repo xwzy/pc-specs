@@ -18,6 +18,31 @@ fn first_word(s: &str) -> String {
     s.split_whitespace().next().unwrap_or(s).to_string()
 }
 
+/// `system_profiler` 给的电量是 `"85%"` 这样的字符串。
+#[cfg(any(target_os = "macos", test))]
+fn percent(text: &str) -> Option<u8> {
+    text.trim()
+        .trim_end_matches('%')
+        .trim()
+        .parse::<u8>()
+        .ok()
+        .filter(|percent| *percent <= 100)
+}
+
+/// 蓝牙设备的电量。耳机左右耳、充电盒各有各的：取设备本身最低的那个，
+/// 充电盒的电量说明不了耳机要不要充电。
+#[cfg(any(target_os = "macos", test))]
+fn bluetooth_battery(props: &serde_json::Value) -> Option<u8> {
+    [
+        "device_batteryLevelMain",
+        "device_batteryLevelLeft",
+        "device_batteryLevelRight",
+    ]
+    .iter()
+    .filter_map(|key| props.get(*key).and_then(|v| v.as_str()).and_then(percent))
+    .min()
+}
+
 // ------------------------------------------------------------------ macOS
 
 #[cfg(target_os = "macos")]
@@ -104,6 +129,7 @@ fn collect_platform() -> Vec<PeripheralInfo> {
                     vendor_id: text("device_vendorID").map(first_word),
                     product_id: text("device_productID").map(first_word),
                     bus: text("device_minorType").map(str::to_string),
+                    battery_percent: bluetooth_battery(props),
                 });
             }
         }
@@ -131,6 +157,7 @@ fn walk_usb(node: &serde_json::Value, acc: &mut Vec<PeripheralInfo>) {
             vendor_id,
             product_id,
             bus,
+            ..Default::default()
         });
     }
     for child in node
@@ -202,6 +229,7 @@ fn usb_devices() -> Vec<PeripheralInfo> {
             vendor_id: vid,
             product_id: pid,
             bus: Some(bus),
+            ..Default::default()
         });
     }
     out
@@ -266,14 +294,41 @@ fn bluetooth_connected() -> Vec<PeripheralInfo> {
     text.lines()
         .filter_map(|l| {
             let rest = l.trim().strip_prefix("Device ")?;
-            let (_addr, name) = rest.split_once(' ')?;
+            let (addr, name) = rest.split_once(' ')?;
+            // 电量要另外问：`bluetoothctl info <地址>`。设备没报电量（或者系统没开这个功能）就是没有。
+            let battery_percent = crate::util::run_stdout_timeout(
+                "bluetoothctl",
+                &["info", addr],
+                std::time::Duration::from_secs(2),
+            )
+            .and_then(|info| bluez_battery(&info));
             Some(PeripheralInfo {
                 kind: "bluetooth".to_string(),
                 name: name.trim().to_string(),
+                battery_percent,
                 ..Default::default()
             })
         })
         .collect()
+}
+
+/// `bluetoothctl info` 里的一行：`Battery Percentage: 0x5a (90)`。括号里是十进制的值。
+#[cfg(any(target_os = "linux", test))]
+fn bluez_battery(info: &str) -> Option<u8> {
+    let line = info
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Battery Percentage:"))?;
+    let decimal = line
+        .split_once('(')
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .and_then(|(value, _)| value.trim().parse::<u8>().ok());
+    // 没有括号的话，退一步读十六进制的那个。
+    let hex = line
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.strip_prefix("0x"))
+        .and_then(|value| u8::from_str_radix(value, 16).ok());
+    decimal.or(hex).filter(|percent| *percent <= 100)
 }
 
 // ---------------------------------------------------------------- Windows
@@ -346,7 +401,7 @@ fn collect_platform() -> Vec<PeripheralInfo> {
                 name,
                 vendor_id,
                 product_id,
-                bus: None,
+                ..Default::default()
             })
         })
         .collect()
@@ -370,4 +425,46 @@ fn parse_usb_id(device_id: &str) -> (Option<String>, Option<String>) {
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn collect_platform() -> Vec<PeripheralInfo> {
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_bluetooth_device_reports_its_lowest_own_battery() {
+        assert_eq!(percent("85%"), Some(85));
+        assert_eq!(percent(" 100 % "), Some(100));
+        assert_eq!(percent("n/a"), None);
+        assert_eq!(percent("250%"), None);
+
+        // 键盘、鼠标只有一个电量。
+        assert_eq!(
+            bluetooth_battery(&json!({ "device_batteryLevelMain": "72%" })),
+            Some(72)
+        );
+        // 耳机：左右耳取低的，充电盒不算。
+        assert_eq!(
+            bluetooth_battery(&json!({
+                "device_batteryLevelLeft": "60%",
+                "device_batteryLevelRight": "45%",
+                "device_batteryLevelCase": "10%",
+            })),
+            Some(45)
+        );
+        assert_eq!(
+            bluetooth_battery(&json!({ "device_minorType": "Mouse" })),
+            None
+        );
+    }
+
+    #[test]
+    fn bluez_prints_the_battery_in_hex_and_decimal() {
+        let info = "Device AA:BB:CC:DD:EE:FF (public)\n\tName: MX Master\n\tConnected: yes\n\tBattery Percentage: 0x5a (90)\n";
+        assert_eq!(bluez_battery(info), Some(90));
+        assert_eq!(bluez_battery("\tBattery Percentage: 0x32\n"), Some(50));
+        assert_eq!(bluez_battery("\tConnected: yes\n"), None);
+        assert_eq!(bluez_battery("\tBattery Percentage: 0xff (255)\n"), None);
+    }
 }

@@ -9,17 +9,6 @@ use gpui_kit::{
 };
 use rust_i18n::t;
 
-fn state_label(raw: &str) -> String {
-    match raw.to_ascii_lowercase().as_str() {
-        "charging" => t!("bat_state_charging").into_owned(),
-        "discharging" => t!("bat_state_discharging").into_owned(),
-        "full" => t!("bat_state_full").into_owned(),
-        "empty" => t!("bat_state_empty").into_owned(),
-        "unknown" => t!("bat_state_unknown").into_owned(),
-        _ => raw.to_string(),
-    }
-}
-
 pub fn render(s: &AppState, cx: &App) -> AnyElement {
     let Some(bat) = &s.snapshot.battery else {
         return ui::page(
@@ -36,7 +25,7 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
         );
     };
 
-    let state = state_label(&bat.state);
+    let state = fmt::battery_state(&bat.state);
     // 电量越低越危险，与占用率的配色方向相反。
     let color = if bat.percentage < 15.0 {
         cx.theme().danger
@@ -46,15 +35,12 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
         cx.theme().success
     };
 
-    // 健康度 = 满电容量 / 设计容量。
-    let health = match (bat.full_capacity_mwh, bat.design_capacity_mwh) {
-        (Some(full), Some(design)) if design > 0 => Some(full as f32 / design as f32 * 100.0),
-        _ => None,
-    };
+    let health = bat.health_percent;
 
     let mwh = |v: Option<u64>| v.map_or(String::new(), fmt::watt_hours);
-    let minutes = |v: Option<u64>| v.filter(|v| *v > 0).map_or(String::new(), fmt::duration);
+    let remaining = |v: Option<u64>| v.filter(|v| *v > 0).map(fmt::duration);
 
+    // 状态已经在电量旁边写了，下面的明细里就不再重复。
     let items = vec![
         (
             t!("spec_vendor").into_owned(),
@@ -64,7 +50,6 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
             t!("spec_brand").into_owned(),
             bat.model.clone().unwrap_or_default(),
         ),
-        (t!("spec_status").into_owned(), state.clone()),
         (
             t!("bat_cycle").into_owned(),
             bat.cycle_count.map_or(String::new(), |c| c.to_string()),
@@ -92,17 +77,18 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
             bat.power_now_mw
                 .map_or(String::new(), |mw| format!("{:.2} W", mw as f64 / 1000.0)),
         ),
-        (
-            t!("bat_time_to_empty").into_owned(),
-            minutes(bat.time_to_empty_secs),
-        ),
-        (
-            t!("bat_time_to_full").into_owned(),
-            minutes(bat.time_to_full_secs),
-        ),
     ];
 
-    let overview = ui::section("bat-overview", t!("nav_dashboard").into_owned()).child(
+    // 副标题给最关心的那个信息：还能用多久，或者还要充多久。
+    let subtitle = remaining(bat.time_to_empty_secs)
+        .map(|left| format!("{} {left}", t!("bat_time_to_empty")))
+        .or_else(|| {
+            remaining(bat.time_to_full_secs)
+                .map(|left| format!("{} {left}", t!("bat_time_to_full")))
+        })
+        .map(SharedString::from);
+
+    let overview = ui::section("bat-overview", t!("bat_level").into_owned()).child(
         v_flex()
             .gap_4()
             .child(
@@ -115,16 +101,16 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
                             .font_semibold()
                             .child(fmt::percent(bat.percentage)),
                     )
-                    .child(ui::muted(state.clone(), cx)),
+                    .child(ui::muted(state, cx)),
             )
             .child(Progress::new("bat-bar").value(bat.percentage).color(color))
-            .child(ui::spec_list(items)),
+            .child(ui::spec_list(items, cx)),
     );
 
     ui::page(
         "page-battery",
         t!("nav_battery").into_owned(),
-        Some(SharedString::from(state)),
+        subtitle,
         vec![],
         vec![overview.into_any_element()],
         cx,

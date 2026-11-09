@@ -26,6 +26,13 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
         .unwrap_or_else(|| cpu.usage_per_core.clone());
 
     // ---- 实时占用 ----
+    let load = s.latest.as_ref().and_then(|t| t.load_average);
+    let stat = |label: String, value: String| {
+        v_flex()
+            .gap_0p5()
+            .child(ui::muted(label, cx).text_xs())
+            .child(div().font_semibold().child(value))
+    };
     let temperature = s
         .latest
         .as_ref()
@@ -50,12 +57,29 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
                     )),
             )
             .child(ui::usage_bar("cpu-overall-bar", overall, cx))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_x_8()
+                    .gap_y_2()
+                    .children(load.map(|[one, five, fifteen]| {
+                        stat(
+                            t!("cpu_load_average").into_owned(),
+                            format!("{one:.2} · {five:.2} · {fifteen:.2}"),
+                        )
+                    }))
+                    .children(
+                        s.uptime_secs()
+                            .map(|secs| stat(t!("spec_uptime").into_owned(), fmt::duration(secs))),
+                    ),
+            )
             .child(div().h(rems(9.)).w_full().child(chart::area(
                 "cpu-live-chart",
                 chart::series(s, Some(120), |t| t.cpu_overall as f64),
                 Some((0.0, 100.0)),
                 palette[0],
                 |v| format!("{v:.0}%"),
+                "%",
             ))),
     );
 
@@ -128,7 +152,7 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
         items.push((t!("spec_temp").into_owned(), settings.temp(temp)));
     }
     let details = ui::plain_section("cpu-details", t!("cpu_details").into_owned())
-        .child(ui::spec_list(items));
+        .child(ui::spec_list(items, cx));
 
     let mut body = vec![
         live.into_any_element(),
@@ -150,7 +174,7 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
             if let Some(e) = t.e_cores {
                 topo.push((t!("cpu_e_cores").into_owned(), e.to_string()));
             }
-            geek = geek.child(ui::spec_list(topo));
+            geek = geek.child(ui::spec_list(topo, cx));
         }
         geek = geek.child(
             v_flex()

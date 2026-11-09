@@ -1,6 +1,6 @@
 use super::{
     color,
-    config::{ItemStyle, MenuBarItem, MenuBarSettings, Metric, SPACING_RANGE, SPACING_STEP},
+    config::{ItemStyle, MenuBarItem, MenuBarSettings, Metric, SPACING_RANGE, SPACING_STEP, Show},
     data::{self, Scale, Value},
     icon,
     widgets::{self, Palette},
@@ -157,7 +157,9 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
             .map(|(index, item)| item_card(s, state, index, count, item, cx)),
     );
     let reset = state.clone();
-    ui::page(
+    // 预览固定在标题下面，往下滚动调整各项设置时它始终看得见；
+    // 最常调的「监控项」排在最前，开关类的通用设置和历史记录在后面。
+    ui::page_pinned(
         "page-menu-bar",
         t!("bar_title").into_owned(),
         Some(t!("bar_description").into_owned().into()),
@@ -173,13 +175,13 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
                 })
                 .into_any_element(),
         ],
+        preview.into_any_element(),
         vec![
-            preview.into_any_element(),
-            general.into_any_element(),
-            history,
             ui::section("bar-items", t!("bar_items").into_owned())
                 .child(items)
                 .into_any_element(),
+            general.into_any_element(),
+            history,
         ],
         cx,
     )
@@ -295,7 +297,7 @@ fn preview_item(s: &AppState, item: &MenuBarItem, cx: &App) -> Div {
             .line_height(relative(1.))
             .font_semibold()
             .text_color(theme.muted_foreground)
-            .child(metric.label())
+            .child(item.show.bar_label(metric))
     };
     match item.style {
         ItemStyle::Stacked => {
@@ -437,6 +439,8 @@ fn item_card(
                 .ghost()
                 .small()
                 .icon(IconName::ArrowUp)
+                .accessibility_label(t!("common_move_up").into_owned())
+                .tooltip(t!("common_move_up").into_owned())
                 .on_click(move |_, _, cx| {
                     state.update(cx, |s, cx| {
                         s.update_settings(|v| v.menu_bar.move_item(metric, true), cx)
@@ -451,6 +455,8 @@ fn item_card(
                 .ghost()
                 .small()
                 .icon(IconName::ArrowDown)
+                .accessibility_label(t!("common_move_down").into_owned())
+                .tooltip(t!("common_move_down").into_owned())
                 .on_click(move |_, _, cx| {
                     state.update(cx, |s, cx| {
                         s.update_settings(|v| v.menu_bar.move_item(metric, false), cx)
@@ -487,12 +493,24 @@ fn item_card(
         )
         .into_any_element()
     };
-    let contents = (metric.shows().len() > 1).then(|| {
+    // 没有风扇的机器（比如 MacBook Air）不提供「风扇转速」这个选项，除非之前已经选了它。
+    let has_fans = s
+        .snapshot
+        .sensors
+        .iter()
+        .chain(s.latest.iter().flat_map(|t| &t.other_sensors))
+        .any(|r| r.kind == "fan");
+    let shows: Vec<Show> = metric
+        .shows()
+        .iter()
+        .copied()
+        .filter(|&show| show != Show::Fan || has_fans || item.show == Show::Fan)
+        .collect();
+    let contents = (shows.len() > 1).then(|| {
         let state = state.clone();
         ui::segmented(
             SharedString::from(format!("show-{key}")),
-            metric
-                .shows()
+            shows
                 .iter()
                 .map(|&show| (show, show.title(metric)))
                 .collect(),
@@ -604,12 +622,14 @@ fn stepper(
     set: fn(&mut MenuBarSettings, u32),
     cx: &App,
 ) -> AnyElement {
-    let button = |name: &str, icon: IconName, enabled: bool, next: u32| {
+    let button = |name: &str, icon: IconName, tip: String, enabled: bool, next: u32| {
         let state = state.clone();
         Button::new(SharedString::from(format!("{id}-{name}")))
             .small()
             .outline()
             .icon(icon)
+            .accessibility_label(tip.clone())
+            .tooltip(tip)
             .disabled(!enabled)
             .on_click(move |_, _, cx| {
                 state.update(cx, |s, cx| {
@@ -630,6 +650,7 @@ fn stepper(
                 .child(button(
                     "down",
                     IconName::Minus,
+                    t!("common_decrease").into_owned(),
                     value > *SPACING_RANGE.start(),
                     value.saturating_sub(SPACING_STEP),
                 ))
@@ -644,6 +665,7 @@ fn stepper(
                 .child(button(
                     "up",
                     IconName::Plus,
+                    t!("common_increase").into_owned(),
                     value < *SPACING_RANGE.end(),
                     value + SPACING_STEP,
                 )),

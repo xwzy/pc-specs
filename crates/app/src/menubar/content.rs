@@ -24,7 +24,10 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
     px, relative,
 };
-use pc_specs_core::model::{GpuTick, MonitorTick, ProcessInfo, SensorReading, StorageInfo};
+use pc_specs_core::model::{
+    GpuTick, MemoryBreakdown, MonitorTick, ProcessInfo, SensorReading, StorageInfo,
+};
+use pc_specs_core::netprobe::TargetKind;
 use rust_i18n::t;
 
 pub const WIDTH: f32 = 340.;
@@ -55,8 +58,6 @@ const CAPTION: f32 = 14.;
 const ROW: f32 = 22.;
 /// 「名称 + 一条格子」这一项的高度。
 const METER: f32 = 27.;
-/// 「接口名 + 说明 | 上下行」这一项的高度。
-const LINK: f32 = 30.;
 /// 两个分项之间的空隙。
 const LIST_GAP: f32 = 8.;
 /// 进程排行里「读 / 写」列头的高度。
@@ -92,7 +93,6 @@ pub enum Flyout {
     Processes(ProcessSort),
     Volumes,
     Sensors,
-    Interfaces,
 }
 
 pub struct Block {
@@ -190,8 +190,8 @@ impl Ink {
 
     fn temperature_palette(&self, cx: &App) -> Palette {
         self.palette(cx).levels(
-            (75. - TEMP_FLOOR) / TEMP_SPAN,
-            (88. - TEMP_FLOOR) / TEMP_SPAN,
+            (health::TEMP_WARNING - TEMP_FLOOR) / TEMP_SPAN,
+            (health::TEMP_CRITICAL - TEMP_FLOOR) / TEMP_SPAN,
         )
     }
 }
@@ -439,6 +439,74 @@ fn hero(
             .gap(px(16.))
             .child(gauge(ink, fraction, tone, value))
             .child(side),
+    )
+}
+
+/// 没有标题的几行补充读数（平均负载、运行时间）。
+fn facts(ink: &Ink, rows: Vec<Stat>) -> Block {
+    Block::card(
+        CARD_TOP + rows.len() as f32 * STAT + CARD_TOP,
+        v_flex()
+            .size_full()
+            .px(px(CARD_X))
+            .pt(px(CARD_TOP))
+            .children(rows.into_iter().map(|row| stat_row(ink, row))),
+    )
+}
+
+/// 内存构成：一条分段占比条，下面逐项列出容量；系统给出压力时再加一行。
+fn composition(s: &AppState, ink: &Ink, memory: &MemoryBreakdown) -> Block {
+    const BAR: f32 = 8.;
+    const BAR_GAP: f32 = 8.;
+    let parts = [
+        (t!("mem_app"), memory.app_bytes, ink.accent),
+        (t!("mem_wired"), memory.wired_bytes, ink.yellow),
+        (t!("mem_compressed"), memory.compressed_bytes, ink.magenta),
+        (t!("mem_cached"), memory.cached_bytes, ink.cyan),
+        (t!("mem_free"), memory.free_bytes, ink.faint),
+    ];
+    let total: u64 = parts.iter().map(|p| p.1).sum();
+    let shown: Vec<_> = parts.iter().filter(|p| p.1 > 0).collect();
+    let mut rows: Vec<Stat> = shown
+        .iter()
+        .map(|(name, bytes, tint)| Stat::dot(*tint, name.to_string(), s.settings.bytes(*bytes)))
+        .collect();
+    if let Some(percent) = memory.pressure_percent {
+        let (level, name) = match memory.pressure_level {
+            Some(2) => (Level::Critical, t!("mem_pressure_critical")),
+            Some(1) => (Level::Warning, t!("mem_pressure_warning")),
+            _ => (Level::Healthy, t!("mem_pressure_normal")),
+        };
+        let mut row = Stat::icon(
+            IconName::Gauge,
+            ink.muted,
+            t!("mem_pressure"),
+            format!("{name} · {percent:.0}%"),
+        );
+        // 正常时保持前景色，只有偏高、严重才变色，免得一排彩色里看不出哪个是警告。
+        row.tone = (level != Level::Healthy).then(|| ink.tone(level));
+        rows.push(row);
+    }
+    let bar = h_flex()
+        .w_full()
+        .h(px(BAR))
+        .mb(px(BAR_GAP))
+        .rounded_full()
+        .overflow_hidden()
+        .bg(ink.track)
+        .children(shown.iter().map(|(_, bytes, tint)| {
+            div()
+                .h_full()
+                .w(relative(*bytes as f32 / total as f32))
+                .bg(*tint)
+        }));
+    card(
+        title_text(ink, t!("mem_composition").into_owned()),
+        None,
+        BAR + BAR_GAP + rows.len() as f32 * STAT,
+        v_flex()
+            .child(bar)
+            .children(rows.into_iter().map(|row| stat_row(ink, row))),
     )
 }
 
@@ -740,6 +808,7 @@ fn process_value(p: &ProcessInfo, sort: ProcessSort) -> f64 {
         ProcessSort::Cpu => p.cpu_percent as f64,
         ProcessSort::Memory => p.mem_bytes as f64,
         ProcessSort::Io => p.read_bps.saturating_add(p.write_bps) as f64,
+        ProcessSort::Net => data::net_traffic(p) as f64,
     }
 }
 
@@ -748,6 +817,15 @@ fn process_text(s: &AppState, p: &ProcessInfo, sort: ProcessSort) -> String {
         ProcessSort::Cpu => format!("{:.1}%", p.cpu_percent),
         ProcessSort::Memory => s.settings.bytes(p.mem_bytes),
         ProcessSort::Io => s.settings.rate(p.read_bps.saturating_add(p.write_bps)),
+        ProcessSort::Net => s.settings.rate(data::net_traffic(p)),
+    }
+}
+
+/// 一行里有两个数的排行：读 / 写，或者下行 / 上行。
+fn pair(p: &ProcessInfo, sort: ProcessSort) -> (u64, u64) {
+    match sort {
+        ProcessSort::Net => (p.net_rx_bps, p.net_tx_bps),
+        _ => (p.read_bps, p.write_bps),
     }
 }
 
@@ -759,6 +837,7 @@ fn process_scale(top: &[&ProcessInfo], sort: ProcessSort) -> f64 {
         ProcessSort::Cpu => peak.max(100.),
         ProcessSort::Memory => peak.max(1.),
         ProcessSort::Io => peak.max(1_048_576.),
+        ProcessSort::Net => peak.max(1.),
     }
 }
 
@@ -788,16 +867,28 @@ fn process_row(
                 .min_w_0()
                 .truncate(),
         );
-    if sort == ProcessSort::Io {
-        let cell = |bps: u64| {
+    if sort.is_pair() {
+        // 流量排行里下行、上行各用面板上那两个数的颜色，一眼对得上；没有数值的调暗。
+        let (first_tint, second_tint) = match sort {
+            ProcessSort::Net => (ink.cyan, ink.magenta),
+            _ => (ink.fg, ink.fg),
+        };
+        let cell = |bps: u64, tint: Hsla| {
             widgets::tabular(
-                label(s.settings.rate(bps), 11.5, busy(bps as f64))
-                    .w(px(IO_W))
-                    .font_medium()
-                    .text_right(),
+                label(
+                    s.settings.rate(bps),
+                    11.5,
+                    if bps > 0 { tint } else { ink.muted },
+                )
+                .w(px(IO_W))
+                .font_medium()
+                .text_right(),
             )
         };
-        return row.child(cell(p.read_bps)).child(cell(p.write_bps));
+        let (first, second) = pair(p, sort);
+        return row
+            .child(cell(first, first_tint))
+            .child(cell(second, second_tint));
     }
     let value = process_value(p, sort);
     row.child(div().w(px(METER_W)).h(px(6.)).child(widgets::meter(
@@ -827,7 +918,7 @@ fn skeleton_row(ink: &Ink, index: usize, sort: ProcessSort, palette: Palette) ->
         .items_center()
         .gap(px(8.))
         .child(div().flex_1().child(bar(NAMES[index % NAMES.len()])));
-    if sort == ProcessSort::Io {
+    if sort.is_pair() {
         let cell = || div().w(px(IO_W)).flex().justify_end().child(bar(36.));
         return row.child(cell()).child(cell());
     }
@@ -840,7 +931,7 @@ fn skeleton_row(ink: &Ink, index: usize, sort: ProcessSort, palette: Palette) ->
     .child(div().w(px(VALUE_W)).flex().justify_end().child(bar(38.)))
 }
 
-/// 列头。卡片里只有读写分两列时才需要（`name` 为假），二级页面每种排行都有。
+/// 列头。卡片里只有分两列的排行（读写、下行上行）才需要（`name` 为假），二级页面每种排行都有。
 fn process_head(ink: &Ink, sort: ProcessSort, name: bool) -> Div {
     let head = |text: String, width: f32, tint: Hsla| {
         div()
@@ -869,6 +960,9 @@ fn process_head(ink: &Ink, sort: ProcessSort, name: bool) -> Div {
         ProcessSort::Io => row
             .child(head(t!("bar_read").into_owned(), IO_W, ink.accent))
             .child(head(t!("bar_write").into_owned(), IO_W, ink.yellow)),
+        ProcessSort::Net => row
+            .child(head(t!("bar_download").into_owned(), IO_W, ink.cyan))
+            .child(head(t!("bar_upload").into_owned(), IO_W, ink.magenta)),
         ProcessSort::Cpu => row.child(div().w(px(METER_W))).child(head(
             t!("proc_col_cpu").into_owned(),
             VALUE_W,
@@ -887,14 +981,22 @@ fn process_list(s: &AppState, ink: &Ink, sort: ProcessSort, rows: usize, cx: &Ap
     let ranked = data::ranked_processes(&s.processes, sort, true, rows);
     let scale = process_scale(&ranked, sort);
     let palette = ink.palette(cx).plain();
-    let loading = s.process_rev == 0;
+    let net = sort == ProcessSort::Net;
+    let unsupported = net && !pc_specs_core::process_net::SUPPORTED;
+    // 流量要等第二次读取才有速率，在那之前也是占位，不能当成「没有流量」。
+    let loading = !unsupported && (s.process_rev == 0 || (net && !s.net_ready));
+    let empty = match (net, unsupported) {
+        (true, true) => t!("net_proc_unsupported"),
+        (true, false) => t!("net_proc_idle"),
+        _ => t!("proc_empty"),
+    };
     let mut list = v_flex().w_full().h(px(rows as f32 * ROW));
     for index in 0..rows {
         list = list.child(match ranked.get(index) {
             Some(p) => process_row(s, ink, p, sort, scale, palette),
             None if loading => skeleton_row(ink, index, sort, palette),
             None if index == 0 => h_flex().h(px(ROW)).items_center().child(label(
-                t!("proc_empty").into_owned(),
+                empty.clone().into_owned(),
                 12.,
                 ink.muted,
             )),
@@ -912,18 +1014,38 @@ fn processes(
     rows: usize,
     cx: &App,
 ) -> Block {
-    // 读写分两列时，卡片里也要有列头，不然看不出哪列是读哪列是写。
-    let head = (sort == ProcessSort::Io).then(|| process_head(ink, sort, false));
+    // 分两列时，卡片里也要有列头，不然看不出哪列是哪个。
+    let head = sort.is_pair().then(|| process_head(ink, sort, false));
     let head_height = if head.is_some() { PROC_HEAD } else { 0. };
-    card(
-        title_text(ink, t!("bar_top_processes").into_owned()),
-        Some(more(ink, side, s.processes.len())),
+    let net = sort == ProcessSort::Net;
+    // 流量排行只列正在收发数据的进程；卡片里列得下，就没有更多可展开的。
+    let total = if net {
+        s.processes
+            .iter()
+            .filter(|p| data::net_traffic(p) > 0)
+            .count()
+    } else {
+        s.processes.len()
+    };
+    let expandable = !net || total > rows;
+    let title = if net {
+        t!("bar_net_processes")
+    } else {
+        t!("bar_top_processes")
+    };
+    let block = card(
+        title_text(ink, title.into_owned()),
+        expandable.then(|| more(ink, side, total)),
         head_height + rows as f32 * ROW,
         v_flex()
             .children(head)
             .child(process_list(s, ink, sort, rows, cx)),
-    )
-    .trigger(Flyout::Processes(sort))
+    );
+    if expandable {
+        block.trigger(Flyout::Processes(sort))
+    } else {
+        block
+    }
 }
 
 // ---- 分项 ----------------------------------------------------------------------
@@ -1031,7 +1153,7 @@ fn sensor_rows(s: &AppState, ink: &Ink, list: &[&SensorReading], cx: &App) -> Ve
                 .items_center()
                 .gap(px(8.))
                 .child(
-                    label(r.label.clone(), 12., ink.fg)
+                    label(fmt::sensor_label(r), 12., ink.fg)
                         .flex_1()
                         .min_w_0()
                         .truncate(),
@@ -1050,6 +1172,121 @@ fn sensor_rows(s: &AppState, ink: &Ink, list: &[&SensorReading], cx: &App) -> Ve
                 ))
         })
         .collect()
+}
+
+/// 随采样刷新的风扇 / 功率读数里，指定种类的那些。
+fn live_readings<'a>(s: &'a AppState, kind: &str) -> Vec<&'a SensorReading> {
+    s.latest.as_ref().map_or_else(Vec::new, |t| {
+        t.other_sensors
+            .iter()
+            .filter(|r| r.kind == kind && r.value.is_finite())
+            .collect()
+    })
+}
+
+/// 名字在左、带单位的读数在右。
+fn reading_rows(ink: &Ink, list: &[&SensorReading]) -> Vec<Div> {
+    list.iter()
+        .map(|r| {
+            h_flex()
+                .h(px(ROW))
+                .w_full()
+                .flex_shrink_0()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    label(fmt::sensor_label(r), 12., ink.fg)
+                        .flex_1()
+                        .min_w_0()
+                        .truncate(),
+                )
+                .child(widgets::tabular(
+                    label(fmt::sensor_value(r), 12., ink.fg)
+                        .font_medium()
+                        .text_right(),
+                ))
+        })
+        .collect()
+}
+
+/// 网络面板里的连通性读数：公网和路由器的延迟、Wi-Fi 信号、今天的流量。
+/// 行数只取决于这台机器有没有网关、有没有 Wi-Fi 网卡，不随读数到没到变化，面板高度才不会跳。
+fn network_facts(s: &AppState, ink: &Ink) -> Vec<Stat> {
+    let latest = s.latency.back();
+    let latency = |kind: TargetKind, label: String, icon: IconName| {
+        let (value, tone) = match latest.and_then(|sample| sample.reading(kind)) {
+            None => ("—".to_string(), None),
+            Some(reading) => match reading.rtt_ms {
+                Some(ms) => (
+                    fmt::latency(ms),
+                    Some(ink.tone(health::latency_level(kind, ms))),
+                ),
+                None => (t!("net_timeout").into_owned(), Some(ink.danger)),
+            },
+        };
+        Stat {
+            lead: Lead::Icon(icon, ink.muted),
+            label,
+            value,
+            tone,
+        }
+    };
+
+    let network = &s.snapshot.network;
+    let mut rows = vec![latency(
+        TargetKind::Internet,
+        t!("net_target_internet").into_owned(),
+        IconName::Globe,
+    )];
+    if network.default_gateway.is_some() {
+        rows.push(latency(
+            TargetKind::Gateway,
+            t!("net_target_gateway").into_owned(),
+            IconName::Router,
+        ));
+    }
+    if network
+        .interfaces
+        .iter()
+        .any(|n| n.kind == "wifi" && n.is_up)
+    {
+        let value = s.wifi.as_ref().map_or("—".to_string(), |wifi| {
+            [
+                wifi.signal_dbm.map(|dbm| format!("{dbm} dBm")),
+                wifi.generation().map(str::to_string),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
+        });
+        rows.push(Stat {
+            lead: Lead::Icon(IconName::Wifi, ink.muted),
+            label: t!("net_wifi").into_owned(),
+            tone: s
+                .wifi
+                .as_ref()
+                .and_then(|wifi| wifi.quality())
+                .map(|quality| ink.tone(health::signal_level(quality))),
+            value: if value.is_empty() {
+                "—".into()
+            } else {
+                value
+            },
+        });
+    }
+    let today = s.usage.day(crate::usage::today());
+    rows.push(Stat::icon(
+        IconName::ArrowDownUp,
+        ink.muted,
+        t!("net_usage_today"),
+        format!(
+            "↓ {}  ↑ {}",
+            s.settings.bytes(today.rx),
+            s.settings.bytes(today.tx)
+        ),
+    ));
+    rows
 }
 
 struct Link<'a> {
@@ -1119,47 +1356,6 @@ fn interfaces(s: &AppState) -> Vec<Link<'_>> {
             .then_with(|| fmt::natural_cmp(a.name, b.name))
     });
     links
-}
-
-fn link_rows(s: &AppState, ink: &Ink, links: &[Link], count: usize) -> Vec<Div> {
-    links
-        .iter()
-        .take(count)
-        .map(|link| {
-            let detail = match link.ipv4 {
-                Some(ip) => format!("{} · {ip}", link.kind_label()),
-                None => link.kind_label(),
-            };
-            h_flex()
-                .w_full()
-                .h(px(LINK))
-                .flex_shrink_0()
-                .items_center()
-                .justify_between()
-                .gap(px(10.))
-                .child(
-                    v_flex()
-                        .min_w_0()
-                        .child(label(link.name.to_string(), 12., ink.fg).truncate())
-                        .child(label(detail, 10.5, ink.muted).truncate()),
-                )
-                .child(widgets::tabular(
-                    v_flex()
-                        .flex_shrink_0()
-                        .items_end()
-                        .child(label(
-                            format!("↓ {}", s.settings.rate(link.rx)),
-                            11.,
-                            ink.cyan,
-                        ))
-                        .child(label(
-                            format!("↑ {}", s.settings.rate(link.tx)),
-                            11.,
-                            ink.magenta,
-                        )),
-                ))
-        })
-        .collect()
 }
 
 /// 「VRAM 已用 / 总量」；没有总量（比如统一内存）时只写已用，什么都没有就返回 `None`。
@@ -1319,6 +1515,26 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                 ink.palette(cx),
                 |v| fmt::percent(v as f32),
             ));
+            let mut extra = Vec::new();
+            if let Some([one, five, fifteen]) = tick.and_then(|t| t.load_average) {
+                extra.push(Stat::icon(
+                    IconName::ChartNoAxesColumn,
+                    ink.muted,
+                    t!("cpu_load_average_short"),
+                    format!("{one:.2} · {five:.2} · {fifteen:.2}"),
+                ));
+            }
+            if let Some(secs) = s.uptime_secs() {
+                extra.push(Stat::icon(
+                    IconName::Clock,
+                    ink.muted,
+                    t!("spec_uptime"),
+                    fmt::duration(secs),
+                ));
+            }
+            if !extra.is_empty() {
+                out.push(facts(&ink, extra));
+            }
             if let Some(tick) = tick.filter(|t| !t.cpu_per_core.is_empty()) {
                 out.push(cores(&ink, &tick.cpu_per_core, cx));
             }
@@ -1362,6 +1578,12 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                 ink.palette(cx),
                 |v| fmt::percent(v as f32),
             ));
+            if let Some(memory) = tick
+                .and_then(|t| t.memory.as_ref())
+                .filter(|m| m.app_bytes + m.wired_bytes + m.compressed_bytes + m.cached_bytes > 0)
+            {
+                out.push(composition(s, &ink, memory));
+            }
             out.push(processes(s, &ink, ProcessSort::Memory, side, rows, cx));
         }
         Metric::Storage => {
@@ -1447,14 +1669,25 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                     settings.temp(max),
                 ));
             }
-            if !list.is_empty() {
-                let mean = list.iter().map(|r| r.value).sum::<f32>() / list.len() as f32;
+            if let Some(gpu) = tick.and_then(MonitorTick::gpu_temperature) {
                 stats.push(Stat::icon(
-                    IconName::Activity,
-                    ink.muted,
-                    t!("panel_average"),
-                    settings.temp(mean),
+                    IconName::Gpu,
+                    heat(&ink, gpu),
+                    t!("nav_gpu"),
+                    settings.temp(gpu),
                 ));
+            }
+            if let Some(pressure) = tick.and_then(|t| t.thermal_pressure) {
+                let mut row = Stat::icon(
+                    IconName::Gauge,
+                    ink.muted,
+                    t!("thermal_pressure"),
+                    fmt::thermal_pressure(pressure),
+                );
+                row.tone = Some(ink.tone(health::thermal_level(pressure)));
+                stats.push(row);
+            }
+            if !list.is_empty() {
                 stats.push(Stat::icon(
                     IconName::Layers,
                     ink.muted,
@@ -1462,6 +1695,8 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                     list.len().to_string(),
                 ));
             }
+            // 概览右边只放得下三行，排在后面的（传感器个数，下面的卡片里本来就有）让位。
+            stats.truncate(3);
             let level = number.map_or(Level::Healthy, |n| health::temperature_level(n as f32));
             out.push(hero(
                 &ink,
@@ -1500,6 +1735,19 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                 } else {
                     block
                 });
+            }
+            // 风扇转速、整机功率：有读数的机型才出现。
+            for (title, kind) in [(t!("bar_fans"), "fan"), (t!("panel_power"), "power")] {
+                let list = live_readings(s, kind);
+                let shown = list.len().min(4);
+                if shown > 0 {
+                    out.push(card(
+                        title_text(&ink, title.into_owned()),
+                        None,
+                        shown as f32 * ROW,
+                        v_flex().children(reading_rows(&ink, &list[..shown])),
+                    ));
+                }
             }
         }
         Metric::Network => {
@@ -1556,6 +1804,7 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                         ink.magenta,
                     )),
             ));
+            out.push(facts(&ink, network_facts(s, &ink)));
             let range = settings.panel_range;
             out.push(traffic(
                 s,
@@ -1575,29 +1824,12 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                 NET_FLOOR,
                 cx,
             ));
-            let links = interfaces(s);
-            if !links.is_empty() {
-                let shown = links.len().min(3);
-                let more_links = links.len() > shown;
-                let block = card(
-                    title_text(&ink, t!("net_interfaces").into_owned()),
-                    more_links.then(|| more(&ink, side, links.len())),
-                    stack(shown, LINK),
-                    v_flex()
-                        .gap(px(LIST_GAP))
-                        .children(link_rows(s, &ink, &links, shown)),
-                );
-                out.push(if more_links {
-                    block.trigger(Flyout::Interfaces)
-                } else {
-                    block
-                });
-            }
+            out.push(processes(s, &ink, ProcessSort::Net, side, rows, cx));
         }
         Metric::Gpu => {
             let info = s.snapshot.gpus.first();
             let mut stats = Vec::new();
-            if let Some(temp) = info.and_then(|g| g.temperature_c) {
+            if let Some(temp) = info.and_then(|g| s.gpu_temperature(g)) {
                 stats.push(Stat::icon(
                     IconName::Thermometer,
                     heat(&ink, temp),
@@ -1716,12 +1948,7 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                 Palette::new(tone, cx).plain(),
                 |v| fmt::percent(v as f32),
             ));
-            let health = match (battery.full_capacity_mwh, battery.design_capacity_mwh) {
-                (Some(full), Some(design)) if design > 0 => {
-                    Some(full as f32 / design as f32 * 100.)
-                }
-                _ => None,
-            };
+            let health = battery.health_percent;
             let stat = |name: String, value: Option<String>| {
                 v_flex()
                     .w(px((INNER - 12.) / 2.))
@@ -1788,7 +2015,11 @@ pub fn flyout(
                 .max(1.) as usize;
             let count = count.min(FLYOUT_ROWS);
             (
-                t!("proc_title").into_owned(),
+                match sort {
+                    ProcessSort::Net => t!("bar_net_processes"),
+                    _ => t!("proc_title"),
+                }
+                .into_owned(),
                 PROC_HEAD + count as f32 * ROW,
                 v_flex()
                     .child(process_head(&ink, sort, true))
@@ -1815,17 +2046,6 @@ pub fn flyout(
                 t!("bar_sensors").into_owned(),
                 count as f32 * ROW,
                 v_flex().children(sensor_rows(s, &ink, &list[..count], cx)),
-            )
-        }
-        Flyout::Interfaces => {
-            let links = interfaces(s);
-            let shown = links.len().min(fit(LINK, 0., 8));
-            (
-                t!("net_interfaces").into_owned(),
-                stack(shown, LINK),
-                v_flex()
-                    .gap(px(LIST_GAP))
-                    .children(link_rows(s, &ink, &links, shown)),
             )
         }
     };

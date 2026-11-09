@@ -1,59 +1,48 @@
 //! 概览：实时指标卡片 + 硬件摘要。
 
 use super::chart;
-use crate::health::{self, Level};
 use crate::state::{AppState, Page};
 use crate::{fmt, ui};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Entity, InteractiveElement as _, IntoElement as _, ParentElement as _,
     SharedString, StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
     rems,
 };
-use pc_specs_core::model::NetworkInterface;
+use pc_specs_core::model::{MonitorTick, NetworkInterface};
 use rust_i18n::t;
 
 /// 走势卡片里展示最近多少个采样。
 const SPARK_POINTS: usize = 60;
+/// 一张指标卡片的最小宽度（px），决定一行放几张。
+const TILE_MIN_WIDTH: f32 = 250.0;
 
-pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
+pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &App) -> AnyElement {
     let alerts = s.alerts();
-    let level = health::overall(&alerts);
     let snap = &s.snapshot;
 
-    // 副标题：机型 · 系统 · 运行时长
+    // 副标题：机型 · 系统 · 已运行多久
     let mut subtitle = Vec::new();
     if let Some(model) = snap.motherboard.as_ref().and_then(|m| m.model.clone()) {
         subtitle.push(model);
     }
     if !snap.os.name.is_empty() {
-        subtitle.push(
-            format!("{} {}", snap.os.name, snap.os.version)
-                .trim()
-                .to_string(),
-        );
+        subtitle.push(fmt::os_title(&snap.os));
     }
     if snap.host.uptime_secs > 0 {
-        subtitle.push(format!("↑ {}", fmt::duration(snap.host.uptime_secs)));
+        subtitle.push(t!("dash_uptime", time = fmt::duration(snap.host.uptime_secs)).into_owned());
     }
     let subtitle = (!subtitle.is_empty()).then(|| SharedString::from(subtitle.join(" · ")));
-
-    let health_label = match level {
-        Level::Healthy => t!("dash_health_healthy"),
-        Level::Warning => t!("dash_health_warning"),
-        Level::Critical => t!("dash_health_critical"),
-    }
-    .into_owned();
 
     // ---- 实时卡片 ----
     let settings = &s.settings;
     let palette = chart::palette(cx);
+    let latest = s.latest.as_ref();
     let mut tiles: Vec<AnyElement> = Vec::new();
 
-    let (cpu_pct, mem_pct) = s
-        .latest
-        .as_ref()
+    let (cpu_pct, mem_pct) = latest
         .map(|t| {
             (
                 t.cpu_overall,
@@ -70,7 +59,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         IconName::Cpu,
         t!("dash_card_cpu").into_owned(),
         fmt::percent(cpu_pct),
-        cpu_detail(s),
+        vec![fmt::core_summary(&snap.cpu)],
         Some(cpu_pct),
         Some(chart::sparkline(
             "dash-spark-cpu",
@@ -83,20 +72,17 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         cx,
     ));
 
+    let mem_used = latest.map_or(snap.memory.used_bytes, |t| t.mem_used_bytes);
     tiles.push(tile(
         "memory",
         IconName::MemoryStick,
         t!("dash_card_memory").into_owned(),
         fmt::percent(mem_pct),
-        format!(
+        vec![format!(
             "{} / {}",
-            settings.bytes(
-                s.latest
-                    .as_ref()
-                    .map_or(snap.memory.used_bytes, |t| t.mem_used_bytes)
-            ),
+            settings.bytes(mem_used),
             settings.bytes(snap.memory.total_bytes)
-        ),
+        )],
         Some(mem_pct),
         Some(chart::sparkline(
             "dash-spark-mem",
@@ -111,11 +97,43 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         cx,
     ));
 
+    // GPU：只有读得到占用率时才放，免得出现一张永远是「—」的卡片。
+    if let Some(gpu) = snap.gpus.iter().find(|g| g.utilization.is_some()) {
+        let util_of = |tick: &MonitorTick, name: &str| {
+            tick.gpus
+                .iter()
+                .find(|g| g.name == name)
+                .and_then(|g| g.utilization)
+        };
+        let util = latest
+            .and_then(|t| util_of(t, &gpu.name))
+            .or(gpu.utilization)
+            .unwrap_or(0.0);
+        let name = gpu.name.clone();
+        tiles.push(tile(
+            "gpu",
+            IconName::Gpu,
+            t!("dash_card_gpu").into_owned(),
+            fmt::percent(util),
+            vec![gpu.name.clone()],
+            Some(util),
+            Some(chart::sparkline(
+                "dash-spark-gpu",
+                chart::series(s, Some(SPARK_POINTS), move |t| {
+                    util_of(t, &name).unwrap_or(0.0) as f64
+                }),
+                Some((0.0, 100.0)),
+                palette[3],
+            )),
+            Page::Gpu,
+            state,
+            cx,
+        ));
+    }
+
     if let Some(disk) = primary_storage(s) {
         let pct = fmt::ratio(disk.used_bytes, disk.total_bytes);
-        let io = s
-            .latest
-            .as_ref()
+        let (read, write) = latest
             .map(|t| (t.disk_read_bps, t.disk_write_bps))
             .unwrap_or_default();
         tiles.push(tile(
@@ -123,24 +141,36 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
             IconName::HardDrive,
             t!("dash_card_storage").into_owned(),
             fmt::percent(pct),
-            format!(
-                "{} / {} · R {} W {}",
-                settings.bytes(disk.used_bytes),
-                settings.bytes(disk.total_bytes),
-                settings.rate(io.0),
-                settings.rate(io.1)
-            ),
+            vec![
+                format!(
+                    "{} / {}",
+                    settings.bytes(disk.used_bytes),
+                    settings.bytes(disk.total_bytes)
+                ),
+                format!(
+                    "{} {} · {} {}",
+                    t!("common_read"),
+                    settings.rate(read),
+                    t!("common_write"),
+                    settings.rate(write)
+                ),
+            ],
             Some(pct),
-            None,
+            Some(chart::sparkline(
+                "dash-spark-disk",
+                chart::series(s, Some(SPARK_POINTS), |t| {
+                    (t.disk_read_bps + t.disk_write_bps) as f64 / (1024.0 * 1024.0)
+                }),
+                None,
+                palette[4],
+            )),
             Page::Storage,
             state,
             cx,
         ));
     }
 
-    let (rx, tx) = s
-        .latest
-        .as_ref()
+    let (rx, tx) = latest
         .map(|t| (t.net_rx_bps, t.net_tx_bps))
         .unwrap_or_default();
     let net_unit = settings.net_unit;
@@ -149,7 +179,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         IconName::Network,
         t!("dash_card_network").into_owned(),
         format!("↓ {}", settings.rate(rx)),
-        format!("↑ {}", settings.rate(tx)),
+        vec![format!("↑ {}", settings.rate(tx))],
         None,
         Some(chart::sparkline(
             "dash-spark-net",
@@ -164,28 +194,45 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         cx,
     ));
 
-    let hottest = s.latest.as_ref().and_then(|t| t.max_temperature());
+    // 温度：整机最热的那个传感器，卡片上写明是谁。
+    let hottest = latest.and_then(|t| {
+        t.temperatures
+            .iter()
+            .filter(|r| r.value.is_finite())
+            .max_by(|a, b| a.value.total_cmp(&b.value))
+    });
+    let temp_unit = settings.temp_unit;
     tiles.push(tile(
         "temperature",
         IconName::Thermometer,
-        t!("dash_card_sensors").into_owned(),
-        hottest.map_or("—".to_string(), |v| settings.temp(v)),
-        if hottest.is_some() {
-            t!("dash_hottest").into_owned()
-        } else {
-            t!("dash_no_temp").into_owned()
-        },
-        hottest.map(|v| v.clamp(0.0, 100.0)),
-        None,
+        t!("dash_card_temp").into_owned(),
+        hottest.map_or("—".to_string(), |r| settings.temp(r.value)),
+        vec![match hottest {
+            Some(r) => format!("{} · {}", t!("dash_hottest"), fmt::sensor_label(r)),
+            None => t!("dash_no_temp").into_owned(),
+        }],
+        hottest.map(|r| r.value.clamp(0.0, 100.0)),
+        hottest.is_some().then(|| {
+            chart::sparkline(
+                "dash-spark-temp",
+                chart::series(s, Some(SPARK_POINTS), move |t| {
+                    t.max_temperature()
+                        .map_or(0.0, |v| fmt::temp_chart_value(v, temp_unit))
+                }),
+                None,
+                palette[4],
+            )
+        }),
         Page::Sensors,
         state,
         cx,
     ));
 
-    let tile_row = h_flex()
+    // 等宽网格：整行放满，最后一行不会被拉宽，窗口窄了自动少放一列。
+    let tile_grid = div()
         .w_full()
-        .flex_wrap()
-        .items_stretch()
+        .grid()
+        .grid_cols(ui::columns(content_width, TILE_MIN_WIDTH, 3))
         .gap_4()
         .children(tiles);
 
@@ -214,28 +261,97 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
     let summary = ui::section("dash-summary", t!("dash_summary_title").into_owned())
         .child(v_flex().gap_1().children(summary_rows(s, state, cx)));
 
+    let mut body = Vec::new();
+    if !settings.tips_dismissed {
+        body.push(tips_card(state, cx));
+    }
+    body.push(alert_row);
+    body.push(tile_grid.into_any_element());
+    body.push(summary.into_any_element());
+
     ui::page(
         "page-dashboard",
         t!("nav_dashboard").into_owned(),
         subtitle,
-        vec![ui::level_tag(level, health_label).into_any_element()],
-        vec![
-            alert_row,
-            tile_row.into_any_element(),
-            summary.into_any_element(),
-        ],
+        vec![],
+        body,
         cx,
     )
 }
 
-/// 一张实时指标卡片，点击跳转到对应页面。
+/// 新手提示：第一次打开时告诉用户，除了这个窗口，监控还能放到哪里。关掉后不再出现。
+fn tips_card(state: &Entity<AppState>, cx: &App) -> AnyElement {
+    let go = |id: &'static str, page: Page| {
+        let state = state.clone();
+        Button::new(id)
+            .small()
+            .outline()
+            .icon(page.icon())
+            .label(page.title())
+            .on_click(move |_, _, cx| {
+                state.update(cx, |s, cx| s.set_page(page, cx));
+            })
+    };
+    let close_state = state.clone();
+    h_flex()
+        .items_start()
+        .gap_3()
+        .p_4()
+        .rounded(cx.theme().radius_lg)
+        .border_1()
+        .border_color(cx.theme().border)
+        .bg(cx.theme().tokens.group_box)
+        .child(
+            Icon::new(IconName::Lightbulb)
+                .small()
+                .text_color(cx.theme().primary),
+        )
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_semibold()
+                        .child(t!("dash_tip_title").into_owned()),
+                )
+                .child(ui::muted(t!("dash_tip_body").into_owned(), cx))
+                .child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(go("tip-menubar", Page::MenuBar))
+                        .child(go("tip-bigscreen", Page::BigScreen))
+                        .child(go("tip-settings", Page::Settings)),
+                ),
+        )
+        .child(
+            Button::new("tip-dismiss")
+                .small()
+                .ghost()
+                .icon(IconName::X)
+                .accessibility_label(t!("dash_tip_dismiss").into_owned())
+                .tooltip(t!("dash_tip_dismiss").into_owned())
+                .on_click(move |_, _, cx| {
+                    close_state.update(cx, |s, cx| {
+                        s.update_settings(|v| v.tips_dismissed = true, cx)
+                    });
+                }),
+        )
+        .into_any_element()
+}
+
+/// 一张实时指标卡片，点击跳转到对应页面。`details` 贴着卡片底部排列，
+/// 同一行里高矮不一的卡片，说明文字仍然对齐。
 #[allow(clippy::too_many_arguments)]
 fn tile(
     key: &'static str,
     icon: IconName,
     label: String,
     value: String,
-    detail: String,
+    details: Vec<String>,
     percent: Option<f32>,
     spark: Option<AnyElement>,
     target: Page,
@@ -246,8 +362,7 @@ fn tile(
     let ring = cx.theme().ring;
     v_flex()
         .id(SharedString::from(format!("tile-{key}")))
-        .flex_1()
-        .min_w(rems(15.))
+        .min_w_0()
         .gap_2()
         .p_4()
         .rounded(cx.theme().radius_lg)
@@ -273,27 +388,18 @@ fn tile(
             this.child(div().h_12().w_full().child(spark))
         })
         .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .truncate()
-                .child(detail),
+            v_flex()
+                .mt_auto()
+                .gap_0p5()
+                .children(details.into_iter().map(|line| {
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .truncate()
+                        .child(line)
+                })),
         )
         .into_any_element()
-}
-
-fn cpu_detail(s: &AppState) -> String {
-    let cpu = &s.snapshot.cpu;
-    match &cpu.topology {
-        Some(t) if t.p_cores.is_some() && t.e_cores.is_some() => t!(
-            "dash_cores_short",
-            p = t.p_cores.unwrap_or_default(),
-            e = t.e_cores.unwrap_or_default()
-        )
-        .into_owned(),
-        _ if cpu.logical_cores > 0 => t!("dash_cores_simple", n = cpu.logical_cores).into_owned(),
-        _ => String::new(),
-    }
 }
 
 /// 容量最大的存储卷作为「主存储」。
@@ -376,12 +482,15 @@ fn summary_rows(s: &AppState, state: &Entity<AppState>, cx: &App) -> Vec<AnyElem
             Page::Storage,
             IconName::HardDrive,
             t!("dash_summary_storage").into_owned(),
-            format!(
-                "{} · {} · {}",
-                disk.name,
-                settings.bytes(disk.total_bytes),
-                disk.kind
-            ),
+            [
+                Some(disk.name.clone()),
+                Some(settings.bytes(disk.total_bytes)),
+                fmt::storage_kind(&disk.kind),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · "),
         ));
     }
     if let Some(mb) = &snap.motherboard {
@@ -404,7 +513,7 @@ fn summary_rows(s: &AppState, state: &Entity<AppState>, cx: &App) -> Vec<AnyElem
             Page::Os,
             IconName::Laptop,
             t!("dash_summary_os").into_owned(),
-            format!("{} {} · {}", snap.os.name, snap.os.version, snap.os.arch),
+            format!("{} · {}", fmt::os_title(&snap.os), snap.os.arch),
         ));
     }
     if let Some(d) = snap
@@ -441,7 +550,7 @@ fn summary_rows(s: &AppState, state: &Entity<AppState>, cx: &App) -> Vec<AnyElem
             Page::Battery,
             IconName::BatteryCharging,
             t!("dash_summary_battery").into_owned(),
-            format!("{:.0}% · {}", b.percentage, b.state),
+            format!("{:.0}% · {}", b.percentage, fmt::battery_state(&b.state)),
         ));
     }
 

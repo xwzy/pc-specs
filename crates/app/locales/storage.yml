@@ -1,0 +1,402 @@
+_version: 2
+
+# ---- 空间分析：收集箱 ----
+sa_act_collect:
+  en: "Add to collector"
+  zh-CN: "加入收集箱"
+sa_act_uncollect:
+  en: "Remove from collector"
+  zh-CN: "移出收集箱"
+sa_collect_empty:
+  en: "Collector: add the files and folders you want to clear, check the total, then move them all to the %{bin} in one go."
+  zh-CN: "收集箱：把想清理的文件和文件夹加进来，核对总量后一次性移到%{bin}。"
+sa_collect_inside:
+  en: "“%{name}” is already part of “%{folder}” in the collector."
+  zh-CN: "“%{name}”已经包含在收集箱里的“%{folder}”中了。"
+sa_collect_more:
+  en: "+%{n} more"
+  zh-CN: "另有 %{n} 项"
+sa_collect_total:
+  en: "%{n} items · %{size}"
+  zh-CN: "%{n} 项 · %{size}"
+sa_collect_trash:
+  en: "Move to %{bin}"
+  zh-CN: "移到%{bin}"
+sa_collect_clear:
+  en: "Clear"
+  zh-CN: "清空"
+sa_collect_trash_title:
+  en: "Move %{n} items to the %{bin}?"
+  zh-CN: "把 %{n} 项移到%{bin}？"
+sa_collect_trash_desc:
+  en: "%{size} in %{files} files in total. They keep taking up space until you empty the %{bin}."
+  zh-CN: "共 %{size}、%{files} 个文件。清空%{bin}之前它们仍占着磁盘，清空后才会释放空间。"
+sa_collect_done:
+  en: "Moved %{n} items (%{size}) to the %{bin}."
+  zh-CN: "已把 %{n} 项（%{size}）移到%{bin}。"
+sa_collect_partial:
+  en: "Moved %{moved} of %{total} items (%{size}). “%{name}” failed: %{error}"
+  zh-CN: "已移走 %{moved}/%{total} 项（%{size}）。“%{name}”失败：%{error}"
+
+# ---- 空间分析：隐藏空间 ----
+sa_hidden_title:
+  en: "Hidden space: %{size}"
+  zh-CN: "隐藏空间：%{size}"
+sa_hidden_desc:
+  en: "This much of the disk is in use but a file scan can't see it: folders this app isn't allowed to read, system snapshots and the file system's own bookkeeping."
+  zh-CN: "磁盘上有这么多空间已被占用，却没法通过扫描文件看到：没有权限读取的文件夹、系统快照，以及文件系统自身的开销。"
+sa_hidden_snapshots:
+  en: " Time Machine local snapshots (%{n}) are part of it; macOS removes them by itself when it needs the room."
+  zh-CN: " 其中包含 %{n} 个时间机器本地快照，系统在空间不足时会自动清理。"
+sa_purgeable_title:
+  en: "Purgeable: %{size}"
+  zh-CN: "可清除空间：%{size}"
+sa_purgeable_desc:
+  en: "macOS frees this by itself when space runs low (caches, re-downloadable files). It is already counted in the map below."
+  zh-CN: "系统在空间不足时会自动腾出这部分（缓存、可重新下载的内容），已经计入下方的统计。"
+sa_purgeable_label:
+  en: "Purgeable"
+  zh-CN: "可清除空间"
+
+# ---- 空间分析：旋转图 ----
+sa_map_treemap:
+  en: "Treemap"
+  zh-CN: "树图"
+sa_map_sunburst:
+  en: "Sunburst"
+  zh-CN: "旋转图"
+sa_hint_rings:
+  en: "Click a segment to select it, double-click a folder to open it, click the center to go back up, right-click for more actions."
+  zh-CN: "单击弧形选中，双击文件夹进入，单击圆心返回上一级，右键查看更多操作。"
+
+# ---- 空间分析：搜索与筛选 ----
+sa_search:
+  en: "Search by name…"
+  zh-CN: "按名称搜索…"
+sa_results:
+  en: "Search results"
+  zh-CN: "搜索结果"
+sa_filter_size:
+  en: "Size"
+  zh-CN: "大小"
+sa_filter_age:
+  en: "Not modified for"
+  zh-CN: "未修改"
+sa_filter_any:
+  en: "Any"
+  zh-CN: "不限"
+sa_age_days:
+  en: "≥ %{n} days"
+  zh-CN: "≥ %{n} 天"
+sa_age_year:
+  en: "≥ 1 year"
+  zh-CN: "≥ 1 年"
+sa_collect_results:
+  en: "Add all to collector"
+  zh-CN: "全部加入收集箱"
+sa_collect_added:
+  en: "Added %{n} items to the collector."
+  zh-CN: "已把 %{n} 项加入收集箱。"
+sa_clear_filters:
+  en: "Clear filters"
+  zh-CN: "清除筛选"
+
+# ---- 空间分析：打开、预览、最近 ----
+sa_act_open_file:
+  en: "Open"
+  zh-CN: "打开"
+sa_act_preview:
+  en: "Quick Look"
+  zh-CN: "快速预览"
+sa_section_recent:
+  en: "Recent"
+  zh-CN: "最近扫描"
+
+# ---- 空间分析：重复文件 ----
+sa_list_duplicates:
+  en: "Duplicates"
+  zh-CN: "重复文件"
+sa_dup_title:
+  en: "Find identical files in “%{scope}”"
+  zh-CN: "在“%{scope}”里查找内容相同的文件"
+sa_dup_desc:
+  en: "Compares the contents of files of %{size} or larger and groups the identical ones. Files inside apps, system folders and app-data folders are skipped, since removing a copy there can break things. Nothing is deleted here: put the extra copies in the collector, review them, then move them to the %{bin}."
+  zh-CN: "按内容比较 %{size} 及以上的文件，把完全相同的归成一组。应用、系统文件夹和应用数据文件夹里的文件会被跳过，删掉那里的副本可能让程序出问题。这里不会删除任何东西：把多余的副本放进收集箱，核对之后再移到%{bin}。"
+sa_dup_find:
+  en: "Find duplicates"
+  zh-CN: "查找重复文件"
+sa_dup_again:
+  en: "Search again"
+  zh-CN: "重新查找"
+sa_dup_running:
+  en: "Comparing %{files} files in “%{scope}”"
+  zh-CN: "正在比较“%{scope}”里的 %{files} 个文件"
+sa_dup_stage_sizes:
+  en: "Checking file sizes: %{done} of %{total}"
+  zh-CN: "正在核对文件大小：%{done} / %{total}"
+sa_dup_stage_samples:
+  en: "Comparing the start and end of files of the same size: %{done} of %{total}"
+  zh-CN: "正在比对大小相同的文件的首尾：%{done} / %{total}"
+sa_dup_stage_content:
+  en: "Reading the remaining candidates in full: %{done} of %{total}"
+  zh-CN: "正在完整读取剩下的候选文件：%{done} / %{total}"
+sa_dup_none:
+  en: "No identical files found in “%{scope}”."
+  zh-CN: "“%{scope}”里没有找到内容相同的文件。"
+sa_dup_found:
+  en: "%{n} sets of identical files · keeping one copy of each frees %{size}"
+  zh-CN: "%{n} 组内容相同的文件 · 每组只留一份可腾出 %{size}"
+sa_dup_searched:
+  en: "Compared %{files} files of %{min} or larger in “%{scope}” in %{time}."
+  zh-CN: "在“%{scope}”里比较了 %{files} 个 %{min} 及以上的文件，用时 %{time}。"
+sa_dup_capped:
+  en: "Only the largest %{n} files were compared; open a smaller folder to cover the rest."
+  zh-CN: "只比较了最大的 %{n} 个文件；进入更小的文件夹可以覆盖其余的。"
+sa_dup_collect_all:
+  en: "Collect the extras of every set"
+  zh-CN: "把所有多余副本加入收集箱"
+sa_dup_clone_note:
+  en: "On APFS, copies made with Finder's Duplicate can share their storage, so removing one may free less than shown."
+  zh-CN: "在 APFS 上，用访达“复制”出来的副本可能共用同一块存储空间，移走一份实际释放的空间可能比显示的少。"
+sa_dup_copies:
+  en: "%{n} copies × %{size}"
+  zh-CN: "%{n} 份 × %{size}"
+sa_dup_keep_one:
+  en: "Keep one, collect the rest"
+  zh-CN: "留一份，其余加入收集箱"
+sa_dup_keep:
+  en: "Keep"
+  zh-CN: "保留"
+sa_dup_staged:
+  en: "In collector"
+  zh-CN: "已在收集箱"
+sa_dup_last_copy:
+  en: "“%{name}” is the last copy that isn't in the collector. Keep it, or every copy would be moved away."
+  zh-CN: "“%{name}”是最后一份没进收集箱的副本，请保留它，否则所有副本都会被移走。"
+sa_dup_error_thread:
+  en: "Couldn't start the search. The system may be out of threads."
+  zh-CN: "无法开始查找，系统线程可能已用尽。"
+
+# ---- 空间分析：和上次扫描相比 ----
+sa_list_changes:
+  en: "Changes"
+  zh-CN: "变化"
+sa_changes_summary:
+  en: "Compared with the scan on %{date}: %{delta} in total (%{before} → %{after})."
+  zh-CN: "与 %{date} 的那次扫描相比，共 %{delta}（%{before} → %{after}）。"
+sa_changes_none:
+  en: "No folder has changed by more than %{size} since then."
+  zh-CN: "此后没有哪个文件夹的变化超过 %{size}。"
+sa_changes_gone:
+  en: "gone or tiny now"
+  zh-CN: "已删除或已变得很小"
+
+# ---- 空间分析：导出 ----
+sa_export_csv:
+  en: "Export CSV"
+  zh-CN: "导出 CSV"
+sa_export_csv_tip:
+  en: "Save the folder you are viewing as a spreadsheet file: one row per folder or file of 1 MiB or larger."
+  zh-CN: "把正在看的文件夹存成表格文件：1 MiB 及以上的每个文件夹、文件占一行。"
+
+# ---- 清理 ----
+sa_mode_clean:
+  en: "Cleanup"
+  zh-CN: "清理"
+sa_clean_intro:
+  en: "Free up space by removing what apps and tools can rebuild on their own. Files you created yourself are never touched."
+  zh-CN: "清掉应用和工具能自己重新生成的东西来腾出空间。你自己创建的文件不会被动。"
+sa_clean_total:
+  en: "%{size} can be cleaned"
+  zh-CN: "可清理 %{size}"
+sa_clean_measuring:
+  en: "Measuring what can be cleaned…"
+  zh-CN: "正在计算可清理的空间…"
+sa_clean_again:
+  en: "Measure again"
+  zh-CN: "重新计算"
+sa_clean_go:
+  en: "Clean %{size}"
+  zh-CN: "清理 %{size}"
+sa_clean_stop:
+  en: "Stop"
+  zh-CN: "停止"
+sa_clean_running:
+  en: "Cleaning… %{size} freed so far"
+  zh-CN: "正在清理…已释放 %{size}"
+sa_clean_caches:
+  en: "App caches"
+  zh-CN: "应用缓存"
+sa_clean_caches_desc:
+  en: "Temporary data apps keep so they run faster; they rebuild it when needed. Browsers are listed separately, and the system's own caches are left alone."
+  zh-CN: "应用为了运行更快而留下的临时数据，需要时会自动重建。浏览器单独列出，系统自带的缓存不动。"
+sa_clean_browsers:
+  en: "Browser caches"
+  zh-CN: "浏览器缓存"
+sa_clean_browsers_desc:
+  en: "Web pages, images and scripts your browsers saved. Pages load a little slower the first time afterwards; bookmarks, passwords and history are not touched."
+  zh-CN: "浏览器存下的网页、图片和脚本。清理后首次打开网页会稍慢；书签、密码和历史记录不受影响。"
+sa_clean_logs:
+  en: "Logs and crash reports"
+  zh-CN: "日志与崩溃报告"
+sa_clean_logs_desc:
+  en: "Written by apps and the system while they run. Usually only needed when tracking down a problem."
+  zh-CN: "应用和系统运行时写下的记录，通常只有排查问题时才用得上。"
+sa_clean_temp:
+  en: "Temporary files"
+  zh-CN: "临时文件"
+sa_clean_temp_desc:
+  en: "Left behind by installers and apps. Anything changed in the last 24 hours is kept."
+  zh-CN: "安装程序和应用留下的临时文件。最近 24 小时内改动过的不动。"
+sa_clean_developer:
+  en: "Developer caches"
+  zh-CN: "开发者缓存"
+sa_clean_developer_desc:
+  en: "Build output and package downloads (Xcode, Cargo, npm, Gradle…). The next build makes or downloads them again, so it takes longer and needs a network connection."
+  zh-CN: "构建产物和依赖包的下载缓存（Xcode、Cargo、npm、Gradle 等）。下次构建会重新生成或重新下载，耗时更长，也需要联网。"
+sa_clean_projects:
+  en: "Project build output"
+  zh-CN: "项目构建产物"
+sa_clean_projects_desc:
+  en: "node_modules, Rust target folders, Python virtual environments, .next and the like inside projects you haven't touched for two weeks (found in the usual code folders). Source files are not touched, but everything built there goes, compiled programs included; the next build or install makes it again, which takes a while and needs a network connection."
+  zh-CN: "在常见的放代码的文件夹里，找出两周没动过的项目，清掉里面的 node_modules、Rust 的 target、Python 虚拟环境、.next 等。源码不会被动，但里面构建出来的东西（包括编译好的程序）会一起清掉；下次构建或安装会重新生成，耗时更长，也需要联网。"
+sa_clean_trash_desc:
+  en: "Everything in the %{bin}. This can't be undone."
+  zh-CN: "%{bin}里的所有东西。清空后无法恢复。"
+sa_clean_files:
+  en: "%{n} files"
+  zh-CN: "%{n} 个文件"
+sa_clean_biggest:
+  en: "Mostly %{items}"
+  zh-CN: "主要是 %{items}"
+sa_clean_blocked:
+  en: "Some locations couldn't be read (permission denied), so they aren't counted."
+  zh-CN: "有些位置没有权限读取，没有计入。"
+sa_clean_explore:
+  en: "See what's inside in space analysis"
+  zh-CN: "在空间分析里看看里面有什么"
+sa_clean_none:
+  en: "Nothing to clean on this computer right now."
+  zh-CN: "这台电脑上目前没有可清理的内容。"
+sa_clean_confirm_title:
+  en: "Clean %{size}?"
+  zh-CN: "清理 %{size}？"
+sa_clean_confirm_desc:
+  en: "These are deleted right away and don't go to the %{bin}. Quit the apps involved first, or they may keep some files:"
+  zh-CN: "下面这些会被直接删除，不会放进%{bin}。建议先退出相关的应用，否则它们正在用的文件会被留下："
+sa_clean_ok:
+  en: "Clean"
+  zh-CN: "清理"
+sa_clean_done:
+  en: "Freed %{size}."
+  zh-CN: "已释放 %{size}。"
+sa_clean_done_skipped:
+  en: "Freed %{size}. %{n} items are in use or protected and were skipped."
+  zh-CN: "已释放 %{size}。有 %{n} 项正在使用或受保护，已跳过。"
+sa_clean_nothing_freed:
+  en: "Nothing could be removed: %{n} items are in use or protected."
+  zh-CN: "没有清掉任何东西：%{n} 项正在使用或受保护。"
+
+# ---- 速度测试 ----
+sa_mode_speed:
+  en: "Speed test"
+  zh-CN: "速度测试"
+sa_speed_test_disk:
+  en: "Test speed"
+  zh-CN: "测速"
+sa_speed_title:
+  en: "Disk speed test"
+  zh-CN: "磁盘速度测试"
+sa_speed_intro:
+  en: "Writes a temporary file on the disk, measures sequential and random 4K read/write speed, then deletes it. Nothing else on the disk is touched."
+  zh-CN: "在磁盘上写一个临时文件，测顺序读写和 4K 随机读写的速度，测完就删。磁盘上的其他内容不会被动。"
+sa_speed_running:
+  en: "Testing %{disk}…"
+  zh-CN: "正在测试 %{disk}…"
+sa_speed_disk:
+  en: "Disk"
+  zh-CN: "磁盘"
+sa_speed_size:
+  en: "Test size"
+  zh-CN: "测试大小"
+sa_speed_start:
+  en: "Start test"
+  zh-CN: "开始测试"
+sa_speed_again:
+  en: "Test again"
+  zh-CN: "重新测试"
+sa_speed_stop:
+  en: "Stop"
+  zh-CN: "停止"
+sa_speed_busy:
+  en: "A scan or cleanup is running. Let it finish first, or the speed will read low."
+  zh-CN: "正在扫描或清理。等它结束再测，否则测出来的速度会偏低。"
+sa_speed_empty:
+  en: "Pick a disk and press “Start test”. A run takes about 10–30 seconds."
+  zh-CN: "选好磁盘，点「开始测试」。一次大约 10～30 秒。"
+sa_speed_seq_write:
+  en: "Sequential write"
+  zh-CN: "顺序写入"
+sa_speed_seq_read:
+  en: "Sequential read"
+  zh-CN: "顺序读取"
+sa_speed_rand_read:
+  en: "Random read 4K · 1 thread"
+  zh-CN: "4K 随机读取 · 单线程"
+sa_speed_rand_read_mt:
+  en: "Random read 4K · %{n} threads"
+  zh-CN: "4K 随机读取 · %{n} 线程"
+sa_speed_rand_write:
+  en: "Random write 4K · 1 thread"
+  zh-CN: "4K 随机写入 · 单线程"
+sa_speed_waiting:
+  en: "Waiting"
+  zh-CN: "等待中"
+sa_speed_seq_note:
+  en: "%{size} tested"
+  zh-CN: "测试量 %{size}"
+sa_speed_iops:
+  en: "%{n} IOPS"
+  zh-CN: "%{n} IOPS"
+sa_speed_latency:
+  en: "avg %{avg} · P99 %{p99}"
+  zh-CN: "平均 %{avg} · P99 %{p99}"
+sa_speed_vs:
+  en: "Changes are compared with the run on %{time}."
+  zh-CN: "变化是和 %{time} 那一次相比的。"
+sa_speed_buffered:
+  en: "This file system doesn't let the test bypass the system cache, so the numbers may be higher than the disk's real speed."
+  zh-CN: "这块盘的文件系统不允许绕开系统缓存，测出来的数字可能比磁盘的真实速度高。"
+sa_speed_note:
+  en: "A short burst shows a disk's peak. An SSD slows down once its fast cache is full, so choose a larger test size to see that."
+  zh-CN: "短时间的测试量到的是磁盘的峰值。固态硬盘的高速缓存写满之后会变慢，选更大的测试大小就能看到。"
+sa_speed_no_space:
+  en: "Not enough free space for the test file: it needs about 100 MiB free."
+  zh-CN: "剩余空间不够放测试文件：至少需要约 100 MiB 空闲。"
+sa_speed_failed:
+  en: "The speed test failed: %{error}"
+  zh-CN: "速度测试失败：%{error}"
+sa_speed_done:
+  en: "%{disk}: write %{write}, read %{read}"
+  zh-CN: "%{disk}：写入 %{write}，读取 %{read}"
+sa_speed_history:
+  en: "History"
+  zh-CN: "历史记录"
+sa_speed_h_time:
+  en: "Time"
+  zh-CN: "时间"
+sa_speed_h_write:
+  en: "Seq. write"
+  zh-CN: "顺序写"
+sa_speed_h_read:
+  en: "Seq. read"
+  zh-CN: "顺序读"
+sa_speed_h_rand_read:
+  en: "4K read (IOPS)"
+  zh-CN: "4K 读（IOPS）"
+sa_speed_h_rand_read_mt:
+  en: "4K read ×%{n} (IOPS)"
+  zh-CN: "4K 读 ×%{n}（IOPS）"
+sa_speed_h_rand_write:
+  en: "4K write (IOPS)"
+  zh-CN: "4K 写（IOPS）"

@@ -27,7 +27,7 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
             ];
             vec![
                 ui::section("mb-details", t!("cpu_details").into_owned())
-                    .child(ui::spec_list(items))
+                    .child(ui::spec_list(items, cx))
                     .into_any_element(),
             ]
         }

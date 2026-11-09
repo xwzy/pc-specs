@@ -1,0 +1,3 @@
+# shellcheck 默认从当前目录解析 `# shellcheck source=` 的相对路径，这里改成相对脚本自己所在的目录。
+source-path=SCRIPTDIR
+external-sources=true

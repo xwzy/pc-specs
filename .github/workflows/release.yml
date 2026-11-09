@@ -1,0 +1,352 @@
+name: Release
+
+# 只能手动触发：GitHub 网页 → Actions → Release → Run workflow（或 `gh workflow run release.yml`）。
+# 提交、PR、tag 都不会触发它。
+#
+# 发布步骤：
+#   1. scripts/version.sh set X.Y.Z    改版本号（唯一来源是根 Cargo.toml），提交并推送到默认分支
+#   2. 手动运行本工作流：在各平台的原生 runner 上编译、签名、打包，汇总成一个 GitHub Release（tag 是 vX.Y.Z）
+#
+# 产物：macOS universal .dmg；Windows x64 / arm64 安装程序 + 便携 zip；Linux x64 / arm64 的 tar.gz、deb、rpm、
+# AppImage；以及 SHA256SUMS.txt（配了 GPG 密钥时还有 .asc 签名和公钥）。
+#
+# 签名用的 secrets（Settings → Secrets and variables → Actions）。没配的平台只会打出未签名的包；
+# 运行时勾选 require_signing（默认勾上），缺了任何一项就会在开头直接报错，不会白跑一轮。
+#   macOS    APPLE_CERTIFICATE            Developer ID Application 证书（.p12）的 base64
+#            APPLE_CERTIFICATE_PASSWORD   .p12 的密码
+#            APPLE_SIGNING_IDENTITY       可选；证书里只有一个 Developer ID 时不用填
+#            公证用下面两组之一：
+#              APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_KEY_BASE64    App Store Connect API key（.p8 的 base64）
+#              APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID                  Apple ID、App 专用密码、Team ID
+#   Windows  WINDOWS_CERTIFICATE          代码签名证书（.pfx）的 base64，密码放 WINDOWS_CERTIFICATE_PASSWORD
+#            或 WINDOWS_SIGN_COMMAND      自定义签名命令（Azure Trusted Signing 等），见 scripts/windows/sign.ps1
+#   Linux    GPG_PRIVATE_KEY, GPG_PASSPHRASE   给 .rpm 和 SHA256SUMS.txt 签名，见 scripts/lib/gpg.sh
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 试跑：只编译、签名、打包，不创建 Release（产物在本次运行的 Artifacts 里，保留 7 天）
+        type: boolean
+        default: false
+      require_signing:
+        description: 要求所有平台都签名（macOS 还要公证）；缺 secrets 或签名失败就报错。只想试试流程可以取消勾选
+        type: boolean
+        default: true
+      draft:
+        description: 发布成草稿：先去 Releases 页面检查，再手动点 Publish
+        type: boolean
+        default: false
+      notes:
+        description: 附加的发布说明（可选），会放在自动生成的更新内容前面
+        type: string
+        default: ''
+
+# 同一时间只跑一个发布，别让两个同时去抢同一个 tag。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check version and release target
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          scripts/version.sh check
+          version="$(scripts/version.sh get)"
+          tag="v${version}"
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "试跑 ${version}：不会创建 Release" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::只能从默认分支（${DEFAULT_BRANCH}）发布，当前是 ${GITHUB_REF_NAME}。想试跑请勾选 dry_run。"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1 \
+            || gh release view "$tag" > /dev/null 2>&1; then
+            echo "::error::${tag} 已经存在（tag 或 Release）。先用 scripts/version.sh set / bump 改版本号再发布。"
+            exit 1
+          fi
+          echo "准备发布 ${tag}（提交 ${GITHUB_SHA})" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Check signing secrets
+        if: ${{ inputs.require_signing }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          missing=()
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ]; then
+            missing+=("macOS 签名：APPLE_CERTIFICATE 和 APPLE_CERTIFICATE_PASSWORD")
+          fi
+          api_key=false
+          apple_id=false
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY_BASE64" ]; then api_key=true; fi
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then apple_id=true; fi
+          if [ "$api_key" = false ] && [ "$apple_id" = false ]; then
+            missing+=("macOS 公证：APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_BASE64，或 APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID")
+          fi
+          if [ -z "$WINDOWS_CERTIFICATE" ] && [ -z "$WINDOWS_SIGN_COMMAND" ]; then
+            missing+=("Windows 签名：WINDOWS_CERTIFICATE（和 WINDOWS_CERTIFICATE_PASSWORD），或 WINDOWS_SIGN_COMMAND")
+          fi
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            missing+=("Linux 签名：GPG_PRIVATE_KEY（和 GPG_PASSPHRASE）")
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            for item in "${missing[@]}"; do
+              echo "::error::缺少 secret：${item}"
+            done
+            echo "::error::在 Settings → Secrets and variables → Actions 里配置；只想试试流程，运行时取消勾选 require_signing。"
+            exit 1
+          fi
+
+  # 发布前先跑测试。采集层有按平台分开的代码，菜单栏位图的渲染测试又只在 macOS 上有意义，所以两个系统各跑一遍。
+  test:
+    name: Test (${{ matrix.os }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+    steps:
+      - uses: actions/checkout@v7
+      - if: ${{ runner.os == 'Linux' }}
+        run: scripts/linux/install-deps.sh
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.os }}
+      - run: cargo test --workspace --locked
+
+  build-macos:
+    name: macOS universal
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-universal
+      - name: Build (arm64 + x86_64 → universal)
+        run: scripts/macos/build.sh --arch universal
+      - name: Package, sign and notarize
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: scripts/macos/package.sh --arch universal ${{ inputs.require_signing && '--notarize' || '' }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pc-specs-macos-universal
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  build-linux:
+    name: Linux ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/linux/install-deps.sh --package
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-${{ matrix.arch }}
+      - run: scripts/linux/build.sh --arch ${{ matrix.arch }}
+      - name: Package (tar.gz, deb, rpm, AppImage)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: scripts/linux/package.sh --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pc-specs-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  build-windows:
+    name: Windows ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-${{ matrix.arch }}
+      # 安装程序用 Inno Setup 编译。runner 镜像里一般自带；没有就装一个。
+      - name: Ensure Inno Setup
+        run: |
+          $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "${env:ProgramFiles}\Inno Setup 6\ISCC.exe")
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and -not ($candidates | Where-Object { Test-Path $_ })) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup 安装失败' }
+          }
+      - run: ./scripts/windows/build.ps1 -Arch ${{ matrix.arch }}
+      - name: Package and sign
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+        run: ./scripts/windows/package.ps1 -Arch ${{ matrix.arch }} ${{ inputs.require_signing && '-RequireSigning' || '' }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pc-specs-windows-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, test, build-macos, build-linux, build-windows]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: pc-specs-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums and signature
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: scripts/checksums.sh dist
+
+      # 先建成草稿、传完所有文件，再按需要公开：传到一半失败，用户看不到半成品的 Release。
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          DRAFT: ${{ inputs.draft }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          {
+            if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES"; fi
+            cat << 'EOF'
+          ### 校验下载
+
+          `SHA256SUMS.txt` 列出了所有文件的 SHA-256。配置了 GPG 密钥时，它还带有签名：
+
+          ```bash
+          gpg --import pc-specs-signing-key.asc
+          gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt --ignore-missing
+          ```
+
+          macOS 的 `.dmg` 和 Windows 的安装程序有系统级的代码签名，不需要额外校验。
+          EOF
+          } > notes.md
+
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+
+          # 上次失败（或选了 draft）留下的同版本草稿直接替换；已经公开的 Release 不动。
+          # prepare 的只读 token 看不到草稿，所以在这里（有写权限）处理。
+          if is_draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null)"; then
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::${TAG} 已经是公开的 Release，不会覆盖。"
+              exit 1
+            fi
+            echo "::warning::替换 ${TAG} 的旧草稿"
+            gh release delete "$TAG" --yes
+          fi
+
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "PC Specs ${VERSION}" \
+            --generate-notes --notes-file notes.md "${flags[@]}"
+          gh release upload "$TAG" dist/* --clobber
+          if [ "$DRAFT" != "true" ]; then
+            gh release edit "$TAG" --draft=false
+          fi
+
+          {
+            echo "### ${TAG}"
+            echo
+            gh release view "$TAG" --json url,isDraft --jq '"\(.url)（草稿：\(.isDraft)）"'
+            echo
+            echo '```'
+            ls -lh dist
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

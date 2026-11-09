@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream 元数据，软件中心 / AppImage 都读它。@VERSION@ / @DATE@ 由 scripts/linux/package.sh 替换。 -->
+<component type="desktop-application">
+  <id>com.xwzy.pc-specs</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>PC Specs</name>
+  <summary>PC configuration viewer and live monitor</summary>
+  <summary xml:lang="zh-CN">查看电脑配置并实时监控</summary>
+  <description>
+    <p>
+      Shows CPU, GPU, memory, storage, network and sensor details of this computer,
+      with live charts, a tray icon and a local JSON API.
+    </p>
+    <p xml:lang="zh-CN">
+      查看这台电脑的 CPU、GPU、内存、存储、网络和传感器信息，带实时图表、托盘图标和本地 JSON 接口。
+    </p>
+  </description>
+  <launchable type="desktop-id">com.xwzy.pc-specs.desktop</launchable>
+  <url type="homepage">https://github.com/xwzy/pc-specs</url>
+  <url type="bugtracker">https://github.com/xwzy/pc-specs/issues</url>
+  <provides>
+    <binary>pc-specs</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

@@ -1,0 +1,15 @@
+# 由 bash / 打包工具解析的文件必须保持 LF：Windows 上 core.autocrlf 会把它们改成 CRLF，
+# 脚本会因此报 `$'\r': command not found`，plist / spec 也会解析失败。
+*.sh        text eol=lf
+*.py        text eol=lf
+*.plist     text eol=lf
+*.desktop   text eol=lf
+*.spec      text eol=lf
+*.xml       text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+
+# 二进制资源，不做任何换行转换
+*.png       binary
+*.ico       binary
+*.icns      binary

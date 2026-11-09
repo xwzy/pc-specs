@@ -71,9 +71,6 @@ bat_time_to_full:
 common_copied:
   en: "Copied"
   zh-CN: "已复制"
-common_copy:
-  en: "Copy"
-  zh-CN: "复制"
 common_loading:
   en: "Loading…"
   zh-CN: "加载中…"
@@ -149,18 +146,9 @@ dash_card_memory:
 dash_card_network:
   en: "Network"
   zh-CN: "网络"
-dash_card_sensors:
-  en: "Sensors"
-  zh-CN: "传感器"
 dash_card_storage:
   en: "Storage"
   zh-CN: "存储"
-dash_cores_short:
-  en: "%{p}P · %{e}E"
-  zh-CN: "%{p}P · %{e}E"
-dash_cores_simple:
-  en: "%{n} cores"
-  zh-CN: "%{n} 核心"
 dash_health_critical:
   en: "Critical"
   zh-CN: "严重"
@@ -380,15 +368,6 @@ mem_no_modules_hint:
 mem_swap:
   en: "Swap"
   zh-CN: "交换空间"
-mem_swap_pct:
-  en: "Swap usage"
-  zh-CN: "Swap 占用"
-mem_swap_total:
-  en: "Swap total"
-  zh-CN: "Swap 总量"
-mem_swap_used:
-  en: "Swap used"
-  zh-CN: "Swap 已用"
 mem_table_capacity:
   en: "Capacity"
   zh-CN: "容量"
@@ -488,9 +467,6 @@ nav_gpu:
 nav_group_hardware:
   en: "Hardware"
   zh-CN: "硬件"
-nav_group_overview:
-  en: "Overview"
-  zh-CN: "总览"
 nav_group_system:
   en: "System"
   zh-CN: "系统"
@@ -560,21 +536,15 @@ net_tx_total:
 os_app_version:
   en: "App version"
   zh-CN: "应用版本"
-os_family:
-  en: "Family"
-  zh-CN: "系统"
-os_name:
-  en: "Name"
-  zh-CN: "名称"
 os_since:
   en: "Since"
   zh-CN: "自"
-os_version:
-  en: "Version"
-  zh-CN: "版本"
 peri_bus:
   en: "Bus / type"
   zh-CN: "总线 / 类型"
+peri_battery:
+  en: "Battery"
+  zh-CN: "电量"
 peri_ids:
   en: "Vendor / ID"
   zh-CN: "厂商 / ID"
@@ -666,11 +636,11 @@ settings_about_version:
   en: "Version"
   zh-CN: "版本"
 settings_alerts:
-  en: "Threshold alerts"
-  zh-CN: "阈值提醒"
+  en: "Alerts and rules"
+  zh-CN: "告警与规则"
 settings_alerts_hint:
-  en: "Notify when CPU, memory, disk or temperature stays too high."
-  zh-CN: "当 CPU、内存、磁盘或温度持续过高时发出通知。"
+  en: "Master switch for the rules on the Rules page: notifications, webhooks and commands when a reading crosses a line."
+  zh-CN: "「规则」页里所有规则的总开关：读数越线时发通知、推送 Webhook 或运行命令。"
 settings_appearance:
   en: "Appearance"
   zh-CN: "外观"
@@ -689,6 +659,33 @@ settings_close_to_tray_hint:
 settings_export_section:
   en: "Export"
   zh-CN: "导出"
+settings_backup_section:
+  en: "Back up and restore"
+  zh-CN: "备份与恢复"
+settings_backup_title:
+  en: "Settings file"
+  zh-CN: "设置文件"
+settings_backup_desc:
+  en: "Save your settings (menu bar, units, rules, big screen…) to a file, or load them from one — handy on a new computer. For safety, rule commands and the local API server switches are not imported."
+  zh-CN: "把设置（顶栏、单位、规则、监控大屏……）存成文件，或者从文件读回来，换电脑时很方便。出于安全，规则里的命令和本机接口服务的开关不会被导入。"
+settings_backup_export:
+  en: "Export…"
+  zh-CN: "导出…"
+settings_backup_import:
+  en: "Import…"
+  zh-CN: "导入…"
+settings_import_done:
+  en: "Settings imported."
+  zh-CN: "设置已导入。"
+settings_import_done_commands:
+  en: "Settings imported. %{n} rule commands were left out for safety — add them again if you trust them."
+  zh-CN: "设置已导入。出于安全，有 %{n} 条规则的命令没有导入，信得过的话请重新添加。"
+settings_import_not_settings:
+  en: "This file isn't a PC Specs settings file."
+  zh-CN: "这个文件不是 PC Specs 的设置文件。"
+settings_import_failed:
+  en: "Couldn't import the settings: %{error}"
+  zh-CN: "导入设置失败：%{error}"
 settings_export_sensitive:
   en: "Include sensitive data"
   zh-CN: "导出包含敏感信息"
@@ -741,8 +738,8 @@ settings_server:
   en: "Local HTTP API"
   zh-CN: "本地 HTTP 接口"
 settings_server_failed:
-  en: "Failed: %{error}"
-  zh-CN: "启动失败：%{error}"
+  en: "Failed to start"
+  zh-CN: "启动失败"
 settings_server_hint:
   en: "Serves snapshots and live metrics as JSON for scripts and dashboards."
   zh-CN: "以 JSON 提供快照与实时指标，方便脚本和看板调用。"
@@ -750,8 +747,8 @@ settings_server_lan:
   en: "Allow LAN access"
   zh-CN: "允许局域网访问"
 settings_server_lan_hint:
-  en: "Listen on every network interface instead of this device only."
-  zh-CN: "监听所有网卡，而不仅限本机访问。"
+  en: "Listen on every network interface: any device on the same network can read this machine's hardware info and live metrics (MAC / serial numbers are redacted by default). Only enable it on networks you trust."
+  zh-CN: "监听所有网卡：同一网络里的任何设备都能读取本机的硬件信息和实时指标（默认不含 MAC、序列号等敏感字段），请只在可信的网络里开启。"
 settings_server_listening:
   en: "Listening on %{addr}"
   zh-CN: "正在监听 %{addr}"
@@ -830,21 +827,12 @@ spec_arch:
 spec_available:
   en: "Available"
   zh-CN: "可用"
-spec_backend:
-  en: "Backend"
-  zh-CN: "后端"
-spec_boot_time:
-  en: "Boot time"
-  zh-CN: "开机时间"
 spec_brand:
   en: "Model"
   zh-CN: "型号"
 spec_cores:
   en: "Cores"
   zh-CN: "核心数"
-spec_desktop:
-  en: "Desktop"
-  zh-CN: "桌面环境"
 spec_driver:
   en: "Driver"
   zh-CN: "驱动"
@@ -893,9 +881,6 @@ spec_serial:
 spec_shell:
   en: "Shell"
   zh-CN: "Shell"
-spec_status:
-  en: "Status"
-  zh-CN: "状态"
 spec_temp:
   en: "Temperature"
   zh-CN: "温度"
@@ -989,6 +974,15 @@ bar_no_items:
 bar_top_processes:
   en: "Top processes"
   zh-CN: "进程排行"
+bar_net_processes:
+  en: "Traffic by process"
+  zh-CN: "进程流量排行"
+net_proc_idle:
+  en: "No process is sending or receiving data right now"
+  zh-CN: "暂时没有进程在收发数据"
+net_proc_unsupported:
+  en: "Per-process traffic isn't available on this system"
+  zh-CN: "当前系统暂不支持按进程统计流量"
 bar_download:
   en: "Download"
   zh-CN: "下载"
@@ -1136,3 +1130,432 @@ menu_zoom:
 menu_close:
   en: "Close Window"
   zh-CN: "关闭窗口"
+dur_dhm:
+  en: "%{d}d %{h}h %{m}m"
+  zh-CN: "%{d} 天 %{h} 小时 %{m} 分"
+dur_hm:
+  en: "%{h}h %{m}m"
+  zh-CN: "%{h} 小时 %{m} 分"
+dur_ms:
+  en: "%{m}m %{s}s"
+  zh-CN: "%{m} 分 %{s} 秒"
+dur_s:
+  en: "%{s}s"
+  zh-CN: "%{s} 秒"
+common_decrease:
+  en: "Decrease"
+  zh-CN: "减小"
+common_increase:
+  en: "Increase"
+  zh-CN: "增大"
+common_move_up:
+  en: "Move up"
+  zh-CN: "上移"
+common_move_down:
+  en: "Move down"
+  zh-CN: "下移"
+spec_missing:
+  en: "%{n} more not reported by the system"
+  zh-CN: "另有 %{n} 项系统没有提供"
+nav_group_desktop:
+  en: "Desktop"
+  zh-CN: "桌面展示"
+nav_toggle_sidebar:
+  en: "Toggle sidebar"
+  zh-CN: "展开 / 收起侧边栏"
+theme_switch_light:
+  en: "Switch to light theme"
+  zh-CN: "切换到浅色主题"
+theme_switch_dark:
+  en: "Switch to dark theme"
+  zh-CN: "切换到深色主题"
+dash_card_temp:
+  en: "Temperature"
+  zh-CN: "温度"
+dash_card_gpu:
+  en: "GPU"
+  zh-CN: "显卡"
+dash_uptime:
+  en: "up %{time}"
+  zh-CN: "已运行 %{time}"
+dash_tip_title:
+  en: "Getting started"
+  zh-CN: "上手提示"
+dash_tip_body:
+  en: "Pin the metrics you check most to the menu bar, or put the whole machine on a second monitor with the monitoring wall. Units, theme and launch at login live in Settings."
+  zh-CN: "把常看的指标放进「顶栏监控」，抬眼就能看到；「监控大屏」可以把整机状态铺满另一块显示器。单位、主题、开机自启都在「设置」里。"
+dash_tip_dismiss:
+  en: "Don't show again"
+  zh-CN: "不再提示"
+monitor_range:
+  en: "Time range"
+  zh-CN: "时间范围"
+net_showing:
+  en: "Showing %{shown} of %{total} interfaces"
+  zh-CN: "显示 %{shown} / %{total} 个网卡"
+net_show_all:
+  en: "Show all"
+  zh-CN: "显示全部"
+net_show_active:
+  en: "Active only"
+  zh-CN: "只看已连接"
+net_kind_loopback:
+  en: "Loopback"
+  zh-CN: "本地回环"
+net_kind_other:
+  en: "Other"
+  zh-CN: "其他"
+sensors_summary:
+  en: "Hottest %{max} (%{name})"
+  zh-CN: "最高 %{max}（%{name}）"
+sensors_summary_cpu:
+  en: "CPU %{value}"
+  zh-CN: "CPU %{value}"
+sensors_summary_gpu:
+  en: "GPU %{value}"
+  zh-CN: "GPU %{value}"
+sensors_summary_thermal:
+  en: "Thermal pressure: %{level}"
+  zh-CN: "热压力：%{level}"
+thermal_pressure:
+  en: "Thermal pressure"
+  zh-CN: "热压力"
+thermal_nominal:
+  en: "Normal"
+  zh-CN: "正常"
+thermal_moderate:
+  en: "Moderate"
+  zh-CN: "中等"
+thermal_heavy:
+  en: "Heavy"
+  zh-CN: "较重"
+thermal_critical:
+  en: "Critical"
+  zh-CN: "严重"
+bat_level:
+  en: "Charge"
+  zh-CN: "电量"
+mem_usage:
+  en: "Memory usage"
+  zh-CN: "内存使用"
+mem_onboard:
+  en: "Onboard"
+  zh-CN: "板载"
+mem_soldered:
+  en: "Soldered"
+  zh-CN: "焊接"
+gpu_geek_index:
+  en: "Device index"
+  zh-CN: "设备序号"
+gpu_geek_vendor_raw:
+  en: "Raw vendor"
+  zh-CN: "厂商原始值"
+gpu_geek_device_type:
+  en: "Device type"
+  zh-CN: "设备类型"
+os_highlights:
+  en: "At a glance"
+  zh-CN: "系统概况"
+peri_kind_bluetooth:
+  en: "Bluetooth"
+  zh-CN: "蓝牙"
+peri_kind_camera:
+  en: "Camera"
+  zh-CN: "摄像头"
+peri_kind_audio:
+  en: "Audio"
+  zh-CN: "音频"
+peri_kind_printer:
+  en: "Printer"
+  zh-CN: "打印机"
+storage_kind_removable:
+  en: "Removable"
+  zh-CN: "可移动"
+dev_copy_summary:
+  en: "Copy summary"
+  zh-CN: "复制摘要"
+proc_cpu_note:
+  en: "CPU: 100% = one fully used core"
+  zh-CN: "CPU 以单核满载为 100%"
+settings_desc:
+  en: "Changes apply immediately and are saved automatically."
+  zh-CN: "修改后立即生效，并自动保存。"
+settings_server_copy:
+  en: "Copy URL"
+  zh-CN: "复制地址"
+settings_server_open:
+  en: "Open in browser"
+  zh-CN: "在浏览器中打开"
+settings_server_retry:
+  en: "Retry"
+  zh-CN: "重试"
+settings_server_failed_hint:
+  en: "%{error}. Port %{port} may be in use by another instance — close it and try again."
+  zh-CN: "%{error}。端口 %{port} 可能已被另一个实例占用，关闭它后再点「重试」。"
+sa_mode_overview:
+  en: "Overview"
+  zh-CN: "概览"
+sa_mode_analyze:
+  en: "Space analysis"
+  zh-CN: "空间分析"
+sa_analyze_disk:
+  en: "Analyze space"
+  zh-CN: "分析空间占用"
+sa_idle_desc:
+  en: "Scan a disk or a folder and see it as a treemap: the bigger the block, the more space it takes. Only file sizes are read — nothing is changed."
+  zh-CN: "扫描一块磁盘或一个文件夹，用矩形树图直观展示：色块越大，占用的空间越多。只读取文件大小，不会改动任何内容。"
+sa_section_disks:
+  en: "Disks"
+  zh-CN: "磁盘"
+sa_section_folders:
+  en: "Folders"
+  zh-CN: "文件夹"
+sa_target_home:
+  en: "Home folder"
+  zh-CN: "个人文件夹"
+sa_target_downloads:
+  en: "Downloads"
+  zh-CN: "下载"
+sa_target_choose:
+  en: "Choose a folder…"
+  zh-CN: "选择文件夹…"
+sa_target_choose_desc:
+  en: "Any folder, such as an external drive or a project"
+  zh-CN: "任意文件夹，比如外接硬盘或某个项目目录"
+sa_used_of:
+  en: "%{used} of %{total} used"
+  zh-CN: "已用 %{used} / %{total}"
+sa_tip_slow:
+  en: "Scanning a whole disk can take a few minutes. You can cancel at any time."
+  zh-CN: "扫描整块磁盘可能需要几分钟，随时可以取消。"
+sa_scanning:
+  en: "Scanning %{name}…"
+  zh-CN: "正在扫描 %{name}…"
+sa_scanning_stats:
+  en: "%{files} files · %{folders} folders · %{size}"
+  zh-CN: "%{files} 个文件 · %{folders} 个文件夹 · %{size}"
+sa_scan_progress:
+  en: "about %{pct}%"
+  zh-CN: "约 %{pct}%"
+sa_cancel:
+  en: "Cancel"
+  zh-CN: "取消"
+sa_failed_title:
+  en: "Couldn't scan %{name}"
+  zh-CN: "无法扫描 %{name}"
+sa_retry:
+  en: "Try again"
+  zh-CN: "重试"
+sa_error_thread:
+  en: "Couldn't start the scan. The system may be out of threads."
+  zh-CN: "无法启动扫描，系统线程可能已用尽。"
+sa_error_not_dir:
+  en: "This is not a folder."
+  zh-CN: "这不是一个文件夹。"
+sa_new_scan:
+  en: "New scan"
+  zh-CN: "重新选择"
+sa_rescan:
+  en: "Rescan"
+  zh-CN: "重新扫描"
+sa_levels:
+  en: "Levels"
+  zh-CN: "层级"
+sa_summary_stats:
+  en: "%{files} files · %{folders} folders · scanned in %{time}"
+  zh-CN: "%{files} 个文件 · %{folders} 个文件夹 · 用时 %{time}"
+sa_volume_line:
+  en: "Disk: %{used} used of %{total} · %{free} free"
+  zh-CN: "磁盘：已用 %{used} / %{total} · 可用 %{free}"
+sa_unreadable:
+  en: "%{n} folders couldn't be read, so they aren't counted."
+  zh-CN: "有 %{n} 个文件夹没有权限读取，没有计入。"
+sa_open_fda:
+  en: "Open Full Disk Access settings"
+  zh-CN: "打开「完全磁盘访问」设置"
+sa_filter_hint:
+  en: "Click a file type to highlight it."
+  zh-CN: "点击某个文件类型，可以单独突出显示。"
+sa_up:
+  en: "Up one level"
+  zh-CN: "返回上一级"
+sa_rest:
+  en: "Small items"
+  zh-CN: "零碎小项"
+sa_empty_folder:
+  en: "Nothing here takes up space"
+  zh-CN: "这里没有占用空间的内容"
+sa_hint:
+  en: "Click a block to select it, double-click a folder to open it, right-click for more actions."
+  zh-CN: "单击色块选中，双击文件夹进入，右键查看更多操作。"
+sa_share_of:
+  en: "%{pct} of this folder"
+  zh-CN: "占当前文件夹 %{pct}"
+sa_rest_desc:
+  en: "%{n} small items grouped together"
+  zh-CN: "%{n} 个零碎小项合并显示"
+sa_files_count:
+  en: "%{n} files"
+  zh-CN: "%{n} 个文件"
+sa_modified:
+  en: "Modified %{date}"
+  zh-CN: "修改于 %{date}"
+sa_act_open:
+  en: "Open folder"
+  zh-CN: "进入文件夹"
+sa_act_reveal_mac:
+  en: "Reveal in Finder"
+  zh-CN: "在访达中显示"
+sa_act_reveal_win:
+  en: "Show in File Explorer"
+  zh-CN: "在资源管理器中显示"
+sa_act_reveal_other:
+  en: "Show in file manager"
+  zh-CN: "在文件管理器中显示"
+sa_act_copy:
+  en: "Copy path"
+  zh-CN: "复制路径"
+sa_act_trash:
+  en: "Move to %{bin}…"
+  zh-CN: "移到%{bin}…"
+sa_bin_trash:
+  en: "Trash"
+  zh-CN: "废纸篓"
+sa_bin_recycle:
+  en: "Recycle Bin"
+  zh-CN: "回收站"
+sa_trash_title:
+  en: "Move to %{bin}?"
+  zh-CN: "移到%{bin}？"
+sa_trash_desc_dir:
+  en: "“%{name}” (%{size}, %{files} files) will be moved to the %{bin}. The space is only freed once you empty the %{bin}."
+  zh-CN: "“%{name}”（%{size}，%{files} 个文件）将被移到%{bin}。清空%{bin}之后才会真正释放空间。"
+sa_trash_desc_file:
+  en: "“%{name}” (%{size}) will be moved to the %{bin}. The space is only freed once you empty the %{bin}."
+  zh-CN: "“%{name}”（%{size}）将被移到%{bin}。清空%{bin}之后才会真正释放空间。"
+sa_trash_ok:
+  en: "Move to %{bin}"
+  zh-CN: "移到%{bin}"
+sa_trash_done:
+  en: "Moved “%{name}” to the %{bin}. Empty the %{bin} to free %{size}."
+  zh-CN: "已把“%{name}”移到%{bin}，清空%{bin}后可释放 %{size}。"
+sa_trash_failed:
+  en: "Couldn't move “%{name}” to the %{bin}: %{error}"
+  zh-CN: "无法把“%{name}”移到%{bin}：%{error}"
+sa_trash_protected:
+  en: "“%{name}” is a system folder or a top-level folder of a disk and can't be removed here."
+  zh-CN: "“%{name}”是系统文件夹或磁盘顶层文件夹，不能在这里移除。"
+sa_cat_video:
+  en: "Videos"
+  zh-CN: "视频"
+sa_cat_audio:
+  en: "Audio"
+  zh-CN: "音频"
+sa_cat_image:
+  en: "Images"
+  zh-CN: "图片"
+sa_cat_document:
+  en: "Documents"
+  zh-CN: "文档"
+sa_cat_archive:
+  en: "Archives & disk images"
+  zh-CN: "压缩包与磁盘镜像"
+sa_cat_program:
+  en: "Apps & programs"
+  zh-CN: "应用与程序"
+sa_cat_code:
+  en: "Code & data files"
+  zh-CN: "代码与数据文件"
+sa_cat_other:
+  en: "Other"
+  zh-CN: "其它"
+sa_list_largest:
+  en: "Largest files"
+  zh-CN: "最大的文件"
+sa_list_folder:
+  en: "This folder"
+  zh-CN: "当前文件夹"
+sa_list_more:
+  en: "Show more"
+  zh-CN: "显示更多"
+sa_list_none:
+  en: "Nothing to show"
+  zh-CN: "没有可显示的内容"
+sa_list_count:
+  en: "Showing %{shown} of %{total}"
+  zh-CN: "显示 %{shown} / %{total} 项"
+sensor_system_total:
+  en: "System power"
+  zh-CN: "整机功耗"
+sensor_dc_in:
+  en: "Power adapter"
+  zh-CN: "电源适配器"
+sensor_battery:
+  en: "Battery"
+  zh-CN: "电池"
+sensor_fan_n:
+  en: "Fan %{n}"
+  zh-CN: "风扇 %{n}"
+sensor_cpu_efficiency_core:
+  en: "CPU efficiency core %{n}"
+  zh-CN: "CPU 能效核心 %{n}"
+sensor_cpu_performance_core:
+  en: "CPU performance core %{n}"
+  zh-CN: "CPU 性能核心 %{n}"
+sensor_cpu_super_core:
+  en: "CPU super core %{n}"
+  zh-CN: "CPU 超级核心 %{n}"
+sensor_gpu_n:
+  en: "GPU %{n}"
+  zh-CN: "GPU %{n}"
+bar_fans:
+  en: "Fans"
+  zh-CN: "风扇"
+bar_show_fan:
+  en: "Fan speed"
+  zh-CN: "风扇转速"
+mem_composition:
+  en: "Composition"
+  zh-CN: "内存构成"
+mem_composition_hint:
+  en: "Apps: memory used by programs. Wired: locked in RAM by the system. Compressed: squeezed to save space. Cached files: file cache the system can drop at any time."
+  zh-CN: "应用内存：程序占用的部分。联动内存：被系统锁定在内存里、不能换出。已压缩：压缩后节省空间的部分。缓存文件：系统随时可以丢弃的文件缓存。"
+mem_app:
+  en: "Apps"
+  zh-CN: "应用内存"
+mem_wired:
+  en: "Wired"
+  zh-CN: "联动内存"
+mem_compressed:
+  en: "Compressed"
+  zh-CN: "已压缩"
+mem_cached:
+  en: "Cached files"
+  zh-CN: "缓存文件"
+mem_free:
+  en: "Free"
+  zh-CN: "空闲"
+mem_pressure:
+  en: "Memory pressure"
+  zh-CN: "内存压力"
+mem_pressure_normal:
+  en: "Normal"
+  zh-CN: "正常"
+mem_pressure_warning:
+  en: "Elevated"
+  zh-CN: "偏高"
+mem_pressure_critical:
+  en: "Critical"
+  zh-CN: "严重"
+mem_swap_in:
+  en: "Swapped in"
+  zh-CN: "换入"
+mem_swap_out:
+  en: "Swapped out"
+  zh-CN: "换出"
+cpu_load_average:
+  en: "Load average (1 / 5 / 15 min)"
+  zh-CN: "平均负载（1 / 5 / 15 分钟）"
+cpu_load_average_short:
+  en: "Load average"
+  zh-CN: "平均负载"

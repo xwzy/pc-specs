@@ -3,6 +3,7 @@
 //! 注意：同一个调用点会创建多张图表时（比如本模块里的函数），必须显式给每张图一个 `id`，
 //! 否则它们共享默认 id（取自调用位置），悬停状态与路径缓存会互相串扰。
 
+use crate::fmt;
 use crate::state::AppState;
 use gpui_kit::component::{ActiveTheme as _, chart::AreaChart, h_flex, v_flex};
 use gpui_kit::{
@@ -84,13 +85,26 @@ pub fn sparkline(
     chart.into_any_element()
 }
 
-/// 带坐标轴与悬停提示的单序列面积图。
+/// 悬停提示里的数值：位数沿用纵轴的规则，再带上单位（`65.8%`、`3.20 MB/s`）。
+/// 默认的提示会直接打出 `65.7766342163086` 这样的原始浮点数。
+fn tooltip_text(value: f64, unit: &str) -> SharedString {
+    let number = fmt::axis_label(value);
+    // 百分号和度数紧贴数字，其余单位前留一个空格。
+    if unit.starts_with('%') || unit.starts_with('°') {
+        format!("{number}{unit}").into()
+    } else {
+        format!("{number} {unit}").into()
+    }
+}
+
+/// 带坐标轴与悬停提示的单序列面积图。`unit` 只用于悬停提示里的数值。
 pub fn area(
     id: &str,
     points: Vec<Point>,
     domain: Option<(f64, f64)>,
     color: Hsla,
     y_format: impl Fn(f64) -> String + 'static,
+    unit: &'static str,
 ) -> AnyElement {
     let mut chart = AreaChart::<Point, SharedString, f64>::new(points)
         .id(SharedString::from(id.to_string()))
@@ -103,6 +117,7 @@ pub fn area(
         .y_axis(true)
         .y_tick_count(3)
         .y_tick_format(y_format)
+        .tooltip_value(move |_, _, value| tooltip_text(value, unit))
         .appear(false);
     if let Some((lo, hi)) = domain {
         // 固定量程（0–100%）时不留顶部余量，否则最上面一格会标成 108% 之类。
@@ -112,12 +127,14 @@ pub fn area(
 }
 
 /// 双序列面积图。`names` 同时用于悬停提示和图下方的图例，让人一眼分清两条线。
+/// `unit` 只用于悬停提示里的数值。
 pub fn area2(
     id: &str,
     points: Vec<Point2>,
     colors: (Hsla, Hsla),
     names: (String, String),
     y_format: impl Fn(f64) -> String + 'static,
+    unit: &'static str,
     cx: &App,
 ) -> AnyElement {
     let legend = h_flex()
@@ -151,6 +168,7 @@ pub fn area2(
         .y_axis(true)
         .y_tick_count(3)
         .y_tick_format(y_format)
+        .tooltip_value(move |_, _, value| tooltip_text(value, unit))
         .appear(false);
     v_flex()
         .size_full()

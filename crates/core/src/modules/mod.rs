@@ -123,7 +123,7 @@ fn collect_unchecked(module: Module) -> ModuleData {
 impl SystemSnapshot {
     /// 合入一个模块的结果。
     ///
-    /// CPU 温度来自传感器模块，两者到达顺序不定，所以任何一方到达时都重新关联一次。
+    /// CPU / GPU 温度来自传感器模块，两者到达顺序不定，所以任何一方到达时都重新关联一次。
     pub fn apply(&mut self, data: ModuleData) {
         match data {
             ModuleData::Host(v) => self.host = v,
@@ -132,7 +132,10 @@ impl SystemSnapshot {
                 self.cpu = v;
                 cpu::enrich_with_sensors(&mut self.cpu, &self.sensors);
             }
-            ModuleData::Gpus(v) => self.gpus = v,
+            ModuleData::Gpus(v) => {
+                self.gpus = v;
+                gpu::enrich_with_sensors(&mut self.gpus, &self.sensors);
+            }
             ModuleData::Memory(v) => self.memory = v,
             ModuleData::Storages(v) => self.storages = v,
             ModuleData::Motherboard(v) => self.motherboard = v,
@@ -148,6 +151,7 @@ impl SystemSnapshot {
             ModuleData::Sensors(v) => {
                 self.sensors = v;
                 cpu::enrich_with_sensors(&mut self.cpu, &self.sensors);
+                gpu::enrich_with_sensors(&mut self.gpus, &self.sensors);
             }
             ModuleData::Battery(v) => self.battery = v,
             ModuleData::Peripherals(v) => self.peripherals = v,

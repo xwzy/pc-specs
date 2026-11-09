@@ -8,27 +8,30 @@
 //! `async_channel` 回到界面线程。`Sampler` 在 Windows 上不是 `Send`，所以必须在监控线程内创建。
 
 use crate::bigscreen::data::History;
-use crate::health::{self, Alert, AlertKind, Level};
+use crate::health::{self, Alert, AlertKind};
 use crate::menubar::archive::Archive;
 use crate::menubar::data::{self as menu_data, Sample};
 use crate::poster;
-use crate::settings::{Settings, ThemePref};
+use crate::rules::{self, Firing, Reading, Rule, RuleEvent};
+use crate::settings::{ImportError, Settings, ThemePref};
 use crate::tray::{Tray, TrayEvent};
+use crate::usage::{self, Usage};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::notification::{Notification, NotificationType};
 use gpui_kit::component::{Theme, ThemeMode, WindowExt as _};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, ClipboardItem, Context, Entity, Global, SharedString,
-    SystemNotification,
+    AnyWindowHandle, App, AppContext as _, ClipboardItem, Context, Entity, Global,
+    PathPromptOptions, SharedString, SystemNotification,
 };
 use pc_specs_core::exporter;
-use pc_specs_core::model::{MonitorTick, ProcessInfo, SystemSnapshot};
+use pc_specs_core::model::{GpuInfo, MonitorTick, ProcessInfo, SystemSnapshot};
 use pc_specs_core::modules::{self, Module, ModuleData};
 use pc_specs_core::monitor::{ProcessSampler, Sampler, TEMPERATURE_TTL};
+use pc_specs_core::netprobe::{self, LatencySample, WifiInfo};
 use pc_specs_core::server::{self, ServerHandle, ServerStatus};
 use pc_specs_core::util::guarded;
 use rust_i18n::t;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -56,6 +59,9 @@ pub enum Page {
     MenuBar,
     BigScreen,
     Processes,
+    Rules,
+    Startup,
+    Apps,
     Export,
     Settings,
 }
@@ -93,6 +99,9 @@ impl Page {
             Page::MenuBar => "menu-bar",
             Page::BigScreen => "big-screen",
             Page::Processes => "processes",
+            Page::Rules => "rules",
+            Page::Startup => "startup",
+            Page::Apps => "apps",
             Page::Export => "export",
             Page::Settings => "settings",
         }
@@ -117,6 +126,9 @@ impl Page {
             Page::MenuBar => IconName::ChartNoAxesCombined,
             Page::BigScreen => IconName::MonitorPlay,
             Page::Processes => IconName::List,
+            Page::Rules => IconName::BellRing,
+            Page::Startup => IconName::Power,
+            Page::Apps => IconName::AppWindow,
             Page::Export => IconName::FileDown,
             Page::Settings => IconName::Settings,
         }
@@ -141,6 +153,9 @@ impl Page {
             Page::MenuBar => t!("bar_title"),
             Page::BigScreen => t!("bs_title"),
             Page::Processes => t!("nav_processes"),
+            Page::Rules => t!("nav_rules"),
+            Page::Startup => t!("nav_startup"),
+            Page::Apps => t!("nav_apps"),
             Page::Export => t!("nav_export"),
             Page::Settings => t!("nav_settings"),
         };
@@ -198,10 +213,19 @@ enum MonitorCmd {
 /// 告警要的是「持续过热」，十几秒的分辨率足够。
 const ALERT_TEMPERATURE_EVERY: Duration = Duration::from_secs(10);
 
-/// 连续多少个采样超标才算「持续」告警（CPU 瞬时尖峰很常见）。
-const SUSTAINED_TICKS: u32 = 5;
-/// 同一类告警两次系统通知之间的最短间隔。
-const ALERT_COOLDOWN: Duration = Duration::from_secs(300);
+/// 网络延迟每隔多久量一次。
+const PROBE_EVERY: Duration = Duration::from_secs(2);
+/// Wi-Fi 详情每隔多久读一次：要起外部命令（macOS 上的 `system_profiler` 要一秒多），不用太勤。
+#[cfg(target_os = "macos")]
+const WIFI_EVERY: Duration = Duration::from_secs(15);
+#[cfg(not(target_os = "macos"))]
+const WIFI_EVERY: Duration = Duration::from_secs(5);
+/// 延迟历史最多留多少个采样（两秒一个，约五分钟）。
+const LATENCY_KEEP: usize = 150;
+/// 距上次采样超过这么久，探测就是停过：旧的读数和新的接不上，重新开始画。
+const LATENCY_GAP_MS: u64 = 20_000;
+/// 规则只认这么近的探测结果；再旧就当没有。
+const RULE_LATENCY_FRESH_MS: u64 = 10_000;
 
 /// 会随时间变化、又不在实时采样里的模块（运行时长、磁盘用量、网卡、电池）。
 /// 常驻托盘时快照会越来越旧，所以定期只重采这几个，而不是整个快照。
@@ -251,10 +275,16 @@ pub struct AppState {
     pub processes: Vec<ProcessInfo>,
     /// 进程列表每更新一次加一，让进程页只在数据真的变了时才重排。
     pub process_rev: u64,
+    /// 最近一次进程列表里有没有有效的网络流量（刚开始统计、还在建基线时没有）。
+    pub net_ready: bool,
     process_stop: Option<mpsc::Sender<()>>,
     process_epoch: u64,
+    /// 正在跑的进程采样线程有没有统计网络流量。需要的人变了就重启它，新线程一开始就把基线建好。
+    process_net: bool,
 
     pub public_ip: LookupState,
+    /// 网络页是否列出全部网卡；默认只列在线且有 IPv4 的，免得几十个虚拟网卡淹没真正在用的。
+    pub net_show_all: bool,
     pub export: ExportState,
 
     pub server: Option<ServerHandle>,
@@ -272,8 +302,37 @@ pub struct AppState {
     tray: Option<Tray>,
     tray_events: async_channel::Sender<TrayEvent>,
 
-    alert_streak: HashMap<AlertKind, u32>,
-    alert_notified: HashMap<AlertKind, Instant>,
+    rule_engine: rules::Engine,
+    /// 规则最近的触发记录，最新的在尾部；落盘保存，重启之后还看得到。
+    pub rule_events: VecDeque<RuleEvent>,
+
+    /// 到网关 / DNS / 公网的延迟，最新的在尾部。只在有人看（网络页、菜单栏的网络面板）
+    /// 或有规则在用的时候才量，见 `net_probe_config`。
+    pub latency: VecDeque<LatencySample>,
+    /// 当前 Wi-Fi 连接的细节；没连 Wi-Fi 或还没读到是 `None`。
+    pub wifi: Option<WifiInfo>,
+    net_stop: Option<mpsc::Sender<()>>,
+    net_epoch: u64,
+    /// 正在跑（或上一次跑）的探测配置。要量的东西变了（换了网络）就重启探测线程。
+    net_probe: Option<ProbeConfig>,
+    /// 每天的上传 / 下载累计。
+    pub usage: Usage,
+}
+
+/// 网络探测要量什么。
+#[derive(Clone, Debug, PartialEq)]
+struct ProbeConfig {
+    gateway: Option<String>,
+    dns: Vec<String>,
+    /// 要读 Wi-Fi 详情时是无线网卡的名字，不需要时为空。
+    wifi: Vec<String>,
+}
+
+/// 探测线程送回来的一帧。
+struct NetFrame {
+    sample: LatencySample,
+    /// 这一帧读了 Wi-Fi 才有：里面的 `None` 是没连 Wi-Fi。
+    wifi: Option<Option<WifiInfo>>,
 }
 
 impl AppState {
@@ -367,9 +426,12 @@ impl AppState {
             temperature_demand: Some(TEMPERATURE_TTL),
             processes: Vec::new(),
             process_rev: 0,
+            net_ready: false,
             process_stop: None,
             process_epoch: 0,
+            process_net: false,
             public_ip: LookupState::Idle,
+            net_show_all: false,
             export: ExportState {
                 format: ExportFormat::Markdown,
                 text: None,
@@ -385,8 +447,14 @@ impl AppState {
             detail_closed: None,
             tray,
             tray_events: tray_tx,
-            alert_streak: HashMap::new(),
-            alert_notified: HashMap::new(),
+            rule_engine: rules::Engine::default(),
+            rule_events: rules::load_events(),
+            latency: VecDeque::new(),
+            wifi: None,
+            net_stop: None,
+            net_epoch: 0,
+            net_probe: None,
+            usage: Usage::load(),
         };
         this.apply_language(cx);
         this.apply_theme(cx);
@@ -396,6 +464,7 @@ impl AppState {
         // 退出前把还没落盘的长期历史写下去（包括正在积累的最后一分钟）。
         cx.on_app_quit(|this, _| {
             guarded("save history", || this.archive.shutdown());
+            guarded("save usage", || this.usage.save());
             async {}
         })
         .detach();
@@ -462,15 +531,87 @@ impl AppState {
         let wants_processes = |s: &Settings| {
             s.bigscreen
                 .uses(crate::bigscreen::config::WidgetKind::Processes)
+                || rules::needs_processes(s)
         };
-        if wants_processes(&now) != wants_processes(&before) {
-            self.sync_process_feed(cx);
+        if wants_processes(&now) != wants_processes(&before)
+            || rules::needs_network_probe(&now) != rules::needs_network_probe(&before)
+        {
+            self.sync_feeds(cx);
+        }
+        if rules::needs_sensors(&now) != rules::needs_sensors(&before) {
+            self.sync_temperature_demand();
         }
         if now.server_enabled != before.server_enabled || now.server_lan != before.server_lan {
             self.restart_server(cx);
         }
         self.settings.save();
         cx.notify();
+    }
+
+    /// 把全部设置存成一个文件（先让用户选位置），换电脑时可以导入回来。
+    pub fn export_settings(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings.clone();
+        self.save_with_dialog(
+            "pc-specs-settings.json".to_string(),
+            false,
+            move || {
+                settings
+                    .to_portable_json()
+                    .map(String::into_bytes)
+                    .map_err(|e| e.to_string())
+            },
+            cx,
+        );
+    }
+
+    /// 让用户选一个导出过的设置文件，读进来换掉当前的设置。
+    pub fn import_settings(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let text = cx
+                .background_executor()
+                .spawn(async move { read_settings_file(&path) })
+                .await;
+            let _ = this.update(cx, |this, cx| this.apply_imported_settings(text, cx));
+        })
+        .detach();
+    }
+
+    fn apply_imported_settings(
+        &mut self,
+        text: Result<String, ImportError>,
+        cx: &mut Context<Self>,
+    ) {
+        match text.and_then(|text| self.settings.imported(&text)) {
+            Ok((settings, dropped)) => {
+                self.update_settings(|current| *current = settings, cx);
+                let message = if dropped == 0 {
+                    t!("settings_import_done").into_owned()
+                } else {
+                    t!("settings_import_done_commands", n = dropped).into_owned()
+                };
+                self.toast(NotificationType::Success, message, cx);
+            }
+            Err(ImportError::NotSettings) => {
+                let message = t!("settings_import_not_settings").into_owned();
+                self.toast(NotificationType::Warning, message, cx);
+            }
+            Err(ImportError::Invalid(error)) => {
+                let message = t!("settings_import_failed", error = error).into_owned();
+                self.toast(NotificationType::Error, message, cx);
+            }
+        }
     }
 
     fn apply_language(&mut self, cx: &mut Context<Self>) {
@@ -496,7 +637,7 @@ impl AppState {
             return;
         }
         self.page = page;
-        self.sync_process_feed(cx);
+        self.sync_feeds(cx);
         // 每次进入导出页都按最新数据生成一份预览。
         if page == Page::Export {
             self.generate_export(self.export.format, cx);
@@ -548,6 +689,8 @@ impl AppState {
                             this.snapshot.merge_tick(tick);
                         }
                     });
+                    // 网关、DNS 是这批数据里来的：换了网络，探测要跟着换目标。
+                    this.sync_net_feed(cx);
                     this.loaded.insert(module);
                     if remaining == 0 {
                         this.refreshing = false;
@@ -623,6 +766,7 @@ impl AppState {
                             this.snapshot.merge_tick(tick);
                         }
                     });
+                    this.sync_net_feed(cx);
                     if remaining == 0 {
                         this.live_refreshing = false;
                     }
@@ -700,7 +844,7 @@ impl AppState {
             || on_menu_bar
         {
             Some(TEMPERATURE_TTL)
-        } else if self.settings.alerts {
+        } else if rules::needs_sensors(&self.settings) {
             Some(ALERT_TEMPERATURE_EVERY)
         } else {
             None
@@ -740,9 +884,14 @@ impl AppState {
         if let Some(tray) = self.tray.as_mut() {
             tray.on_tick(&tick, &self.settings, &self.snapshot);
         }
-        if self.settings.alerts {
-            self.evaluate_alerts(&tick, cx);
-        }
+        // 速率 × 间隔就是这一段走的字节数（速率本身就是字节数除以间隔得来的）。
+        self.usage.record(
+            usage::today(),
+            tick.net_rx_bps as f64 * tick.elapsed_secs,
+            tick.net_tx_bps as f64 * tick.elapsed_secs,
+        );
+        self.usage.save_if_due();
+        self.evaluate_rules(&tick, cx);
         if !self.paused {
             self.tick_labels
                 .push_back(crate::fmt::clock(tick.timestamp).into());
@@ -788,43 +937,29 @@ impl AppState {
         cx.notify();
     }
 
+    /// 开机至今的秒数：以最近一次采样的时刻为准，页面开着也会随之增长。
+    pub fn uptime_secs(&self) -> Option<u64> {
+        let host = &self.snapshot.host;
+        let now = self.latest.as_ref().map_or(0, |t| t.timestamp / 1000);
+        let secs = if host.boot_time > 0 && now > 0 {
+            now.saturating_sub(host.boot_time)
+        } else {
+            host.uptime_secs
+        };
+        (secs > 0).then_some(secs)
+    }
+
+    /// GPU 的温度：整机只有一块 GPU 时优先用实时读数（快照里的是采集那一刻的），否则用快照里的。
+    pub fn gpu_temperature(&self, gpu: &GpuInfo) -> Option<f32> {
+        let live = (self.snapshot.gpus.len() == 1)
+            .then(|| self.latest.as_ref().and_then(MonitorTick::gpu_temperature))
+            .flatten();
+        live.or(gpu.temperature_c)
+    }
+
     /// 当前健康告警。
     pub fn alerts(&self) -> Vec<Alert> {
         health::evaluate(self.latest.as_ref(), &self.snapshot.storages)
-    }
-
-    fn evaluate_alerts(&mut self, tick: &MonitorTick, cx: &mut Context<Self>) {
-        let alerts = health::evaluate(Some(tick), &self.snapshot.storages);
-        let critical: HashMap<AlertKind, &Alert> = alerts
-            .iter()
-            .filter(|a| a.level == Level::Critical)
-            .map(|a| (a.kind, a))
-            .collect();
-        for kind in [
-            AlertKind::Cpu,
-            AlertKind::Memory,
-            AlertKind::Disk,
-            AlertKind::Temperature,
-        ] {
-            let Some(alert) = critical.get(&kind) else {
-                self.alert_streak.remove(&kind);
-                continue;
-            };
-            let streak = self.alert_streak.entry(kind).or_insert(0);
-            *streak += 1;
-            if *streak < SUSTAINED_TICKS {
-                continue;
-            }
-            let cooled_down = self
-                .alert_notified
-                .get(&kind)
-                .is_none_or(|at| at.elapsed() >= ALERT_COOLDOWN);
-            if cooled_down {
-                self.alert_notified.insert(kind, Instant::now());
-                let message = self.alert_message(alert);
-                self.notify_alert(message, cx);
-            }
-        }
     }
 
     pub fn alert_message(&self, alert: &Alert) -> String {
@@ -843,10 +978,243 @@ impl AppState {
         message.into_owned()
     }
 
-    // ---- 进程列表 ---------------------------------------------------------
+    // ---- 规则 -------------------------------------------------------------
 
-    pub fn sync_process_feed(&mut self, cx: &mut Context<Self>) {
-        if (self.page == Page::Processes && self.main_window.is_some())
+    /// 评估每条启用的规则，触发的执行它的动作。总开关关着就什么都不做。
+    fn evaluate_rules(&mut self, tick: &MonitorTick, cx: &mut Context<Self>) {
+        if !self.settings.alerts {
+            self.rule_engine.reset();
+            return;
+        }
+        // 逐个字段借用，引擎要可变借用自己，不能借走整个 `self`。
+        let inputs = rules::Inputs {
+            settings: &self.settings,
+            tick: Some(tick),
+            snapshot: &self.snapshot,
+            processes: if self.process_stop.is_some() {
+                &self.processes
+            } else {
+                &[]
+            },
+            latency: fresh_latency(&self.latency, self.net_stop.is_some()),
+        };
+        let fired = self
+            .rule_engine
+            .evaluate(&self.settings.rules, &inputs, Instant::now());
+        for firing in fired {
+            self.deliver(&firing, true, cx);
+        }
+    }
+
+    /// 进程采样没在跑的时候列表是旧的，规则不该拿它下结论。
+    fn rule_processes(&self) -> &[ProcessInfo] {
+        if self.process_stop.is_some() {
+            &self.processes
+        } else {
+            &[]
+        }
+    }
+
+    /// 这条规则的条件此刻是否成立。
+    pub fn is_rule_active(&self, id: u32) -> bool {
+        self.settings.alerts && self.rule_engine.is_active(id)
+    }
+
+    /// 执行一次触发的全部动作。`log` 为假表示是界面上的「试一试」：结果用提示告诉用户，不进触发记录。
+    fn deliver(&mut self, firing: &Firing, log: bool, cx: &mut Context<Self>) {
+        let rule = &firing.rule;
+        let message = rules::message(rule, &firing.reading, &self.settings);
+        let summary = rule.summary(&self.settings);
+        let host = self.snapshot.host.hostname.clone();
+        let now_ms = pc_specs_core::util::now_ms();
+        if rule.notify {
+            self.notify_alert(message.clone(), cx);
+        }
+        let url = self.settings.webhook_url.trim().to_string();
+        if rule.webhook && !url.is_empty() {
+            let body = rules::webhook_body(
+                self.settings.webhook_format,
+                firing,
+                &summary,
+                &message,
+                &host,
+                now_ms,
+            );
+            self.send_webhook(url, body, !log, cx);
+        }
+        if rule.has_command() {
+            self.run_rule_command(firing, &summary, &message, &host, !log, cx);
+        }
+        if log {
+            self.rule_events.push_back(RuleEvent {
+                timestamp_ms: now_ms,
+                rule_id: rule.id,
+                message,
+            });
+            while self.rule_events.len() > rules::MAX_EVENTS {
+                self.rule_events.pop_front();
+            }
+            rules::save_events(&self.rule_events);
+        }
+    }
+
+    /// 把这条规则的动作用当前读数（读不到就用阈值）执行一遍。
+    pub fn test_rule(&mut self, id: u32, cx: &mut Context<Self>) {
+        let Some(rule) = self
+            .settings
+            .rules
+            .iter()
+            .find(|rule| rule.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        let inputs = rules::Inputs {
+            settings: &self.settings,
+            tick: self.latest.as_ref(),
+            snapshot: &self.snapshot,
+            processes: self.rule_processes(),
+            latency: fresh_latency(&self.latency, self.net_stop.is_some()),
+        };
+        let reading = rules::read(rule.metric, &inputs).unwrap_or(Reading {
+            value: rule.threshold,
+            detail: None,
+        });
+        self.deliver(&Firing { rule, reading }, false, cx);
+    }
+
+    /// 向设置里的地址发一条测试消息，结果用提示告诉用户。
+    pub fn test_webhook(&mut self, cx: &mut Context<Self>) {
+        let url = self.settings.webhook_url.trim().to_string();
+        if url.is_empty() {
+            self.toast(
+                NotificationType::Warning,
+                t!("rule_webhook_empty").into_owned(),
+                cx,
+            );
+            return;
+        }
+        let firing = Firing {
+            rule: Rule::default(),
+            reading: Reading {
+                value: 97.0,
+                detail: None,
+            },
+        };
+        let body = rules::webhook_body(
+            self.settings.webhook_format,
+            &firing,
+            "test",
+            &t!("rule_webhook_test_message"),
+            &self.snapshot.host.hostname,
+            pc_specs_core::util::now_ms(),
+        );
+        self.send_webhook(url, body, true, cx);
+    }
+
+    /// 后台推送，不卡界面。失败一律提示；成功只在用户主动测试时提示。
+    fn send_webhook(&self, url: String, body: String, report: bool, cx: &mut Context<Self>) {
+        run_in_background(
+            "pc-specs-webhook",
+            move || pc_specs_core::util::post_json(&url, &body),
+            move |this, result, cx| match result {
+                Ok(()) if report => this.toast(
+                    NotificationType::Success,
+                    t!("rule_webhook_ok").into_owned(),
+                    cx,
+                ),
+                Ok(()) => {}
+                Err(error) => {
+                    tracing::warn!("webhook failed: {error}");
+                    this.toast(
+                        NotificationType::Error,
+                        t!("rule_webhook_failed", error = error).into_owned(),
+                        cx,
+                    );
+                }
+            },
+            cx,
+        );
+    }
+
+    /// 后台运行规则里写的命令。触发的细节放在 `PCSPECS_*` 环境变量里，不拼进命令行。
+    fn run_rule_command(
+        &self,
+        firing: &Firing,
+        summary: &str,
+        message: &str,
+        host: &str,
+        report: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let command = firing.rule.command.trim().to_string();
+        let env: Vec<(&'static str, String)> = vec![
+            ("PCSPECS_RULE", summary.to_string()),
+            ("PCSPECS_METRIC", firing.rule.metric.key().to_string()),
+            ("PCSPECS_VALUE", firing.reading.value.to_string()),
+            ("PCSPECS_THRESHOLD", firing.rule.threshold.to_string()),
+            (
+                "PCSPECS_DETAIL",
+                firing.reading.detail.clone().unwrap_or_default(),
+            ),
+            ("PCSPECS_MESSAGE", message.to_string()),
+            ("PCSPECS_HOST", host.to_string()),
+        ];
+        run_in_background(
+            "pc-specs-rule-command",
+            move || {
+                let env: Vec<(&str, &str)> = env
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_str()))
+                    .collect();
+                pc_specs_core::util::run_shell(&command, &env, Duration::from_secs(60))
+            },
+            move |this, output, cx| match output {
+                Some(output) if output.ok => {
+                    if report {
+                        this.toast(
+                            NotificationType::Success,
+                            t!("rule_command_ok").into_owned(),
+                            cx,
+                        );
+                    }
+                }
+                Some(output) => {
+                    let detail = output.stderr.lines().next().unwrap_or_default().to_string();
+                    tracing::warn!("rule command failed: {}", output.stderr.trim());
+                    this.toast(
+                        NotificationType::Error,
+                        t!("rule_command_failed", detail = detail).into_owned(),
+                        cx,
+                    );
+                }
+                None => this.toast(
+                    NotificationType::Error,
+                    t!("rule_command_timeout").into_owned(),
+                    cx,
+                ),
+            },
+            cx,
+        );
+    }
+
+    pub fn clear_rule_events(&mut self, cx: &mut Context<Self>) {
+        self.rule_events.clear();
+        rules::save_events(&self.rule_events);
+        cx.notify();
+    }
+
+    // ---- 后台数据源（进程列表、网络探测）----------------------------------------
+
+    /// 窗口、页面、菜单栏面板或设置变了之后调用：该开的数据源开起来，没人要的关掉。
+    pub fn sync_feeds(&mut self, cx: &mut Context<Self>) {
+        self.sync_process_feed(cx);
+        self.sync_net_feed(cx);
+    }
+
+    fn sync_process_feed(&mut self, cx: &mut Context<Self>) {
+        if rules::needs_processes(&self.settings)
+            || (self.page == Page::Processes && self.main_window.is_some())
             || (self.detail_window.is_some()
                 && self.detail_metric.is_some_and(|m| m.needs_processes()))
             || (self.wall_window.is_some()
@@ -855,31 +1223,50 @@ impl AppState {
                     .bigscreen
                     .uses(crate::bigscreen::config::WidgetKind::Processes))
         {
-            if self.process_stop.is_none() {
-                self.start_process_feed(cx);
+            let net = self.process_net_wanted();
+            if self.process_stop.is_none() || self.process_net != net {
+                self.start_process_feed(cx, net);
             }
         } else {
             self.stop_process_feed();
         }
     }
 
-    fn start_process_feed(&mut self, cx: &mut Context<Self>) {
+    /// 有没有人要看每个进程的网络流量：只有菜单栏里打开的「网络」面板用得上。
+    fn process_net_wanted(&self) -> bool {
+        pc_specs_core::process_net::SUPPORTED
+            && self.detail_window.is_some()
+            && self.detail_metric == Some(crate::menubar::config::Metric::Network)
+    }
+
+    fn start_process_feed(&mut self, cx: &mut Context<Self>, net: bool) {
         self.stop_process_feed();
         let epoch = self.process_epoch;
+        self.process_net = net;
+        self.net_ready = false;
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
-        let (tx, rx) = async_channel::bounded::<Vec<ProcessInfo>>(1);
+        let (tx, rx) = async_channel::bounded::<(Vec<ProcessInfo>, bool)>(1);
         let started = spawn_thread("pc-specs-processes", move || {
-            let mut sampler = guarded("process sampler init", ProcessSampler::new);
+            let new_sampler = || {
+                guarded("process sampler init", || {
+                    let mut sampler = ProcessSampler::new();
+                    sampler.set_network(net);
+                    sampler
+                })
+            };
+            let mut sampler = new_sampler();
             // 基线建好后尽快出第一帧（CPU 占用至少要隔一小段才有意义），之后按 1.5 秒一帧。
             let mut wait = Duration::from_millis(400);
             // 超时 = 该采样了；收到停止信号或发送端断开则退出。
             while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(wait) {
                 if sampler.is_none() {
-                    sampler = guarded("process sampler init", ProcessSampler::new);
+                    sampler = new_sampler();
                 }
-                let list = sampler
-                    .as_mut()
-                    .and_then(|sampler| guarded("process sampler", || sampler.sample()));
+                let list = sampler.as_mut().and_then(|sampler| {
+                    guarded("process sampler", || {
+                        (sampler.sample(), sampler.network_ready())
+                    })
+                });
                 match list {
                     Some(list) => {
                         if tx.send_blocking(list).is_err() {
@@ -901,13 +1288,14 @@ impl AppState {
             return;
         }
         cx.spawn(async move |this, cx| {
-            while let Ok(list) = rx.recv().await {
+            while let Ok((list, net_ready)) = rx.recv().await {
                 let accepted = this
                     .update(cx, |this, cx| {
                         if this.process_epoch != epoch {
                             return false;
                         }
                         this.processes = list;
+                        this.net_ready = net_ready;
                         this.process_rev += 1;
                         cx.notify();
                         true
@@ -925,6 +1313,154 @@ impl AppState {
         // 丢弃 Sender 即通知线程退出。
         self.process_stop = None;
         self.process_epoch = self.process_epoch.wrapping_add(1);
+    }
+
+    /// 现在要不要探测网络、探测什么。看得见读数（网络页、菜单栏的网络面板）
+    /// 或者有规则在用的时候才量，否则不发任何连接。
+    fn net_probe_config(&self) -> Option<ProbeConfig> {
+        let on_page = self.page == Page::Network && self.main_window.is_some();
+        let on_panel = self.detail_window.is_some()
+            && self.detail_metric == Some(crate::menubar::config::Metric::Network);
+        if !(on_page || on_panel || rules::needs_network_probe(&self.settings)) {
+            return None;
+        }
+        let network = &self.snapshot.network;
+        // Wi-Fi 详情要起外部命令，只有读数看得见时才读。
+        let wifi = if on_page || on_panel {
+            network
+                .interfaces
+                .iter()
+                .filter(|n| n.kind == "wifi" && n.is_up)
+                .map(|n| n.name.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Some(ProbeConfig {
+            gateway: network.default_gateway.clone(),
+            dns: network.dns_servers.clone(),
+            wifi,
+        })
+    }
+
+    fn sync_net_feed(&mut self, cx: &mut Context<Self>) {
+        match self.net_probe_config() {
+            Some(config) => {
+                if self.net_stop.is_none() || self.net_probe.as_ref() != Some(&config) {
+                    self.start_net_feed(config, cx);
+                }
+            }
+            None => self.stop_net_feed(),
+        }
+    }
+
+    fn start_net_feed(&mut self, config: ProbeConfig, cx: &mut Context<Self>) {
+        self.stop_net_feed();
+        let epoch = self.net_epoch;
+        // 换了网络、或者探测停过一阵：旧的延迟和新的接不上，从头画。
+        let now = pc_specs_core::util::now_ms();
+        let stale = self
+            .latency
+            .back()
+            .is_none_or(|last| now.saturating_sub(last.timestamp_ms) > LATENCY_GAP_MS);
+        let moved = self
+            .net_probe
+            .as_ref()
+            .is_some_and(|old| old.gateway != config.gateway || old.dns != config.dns);
+        if stale || moved {
+            self.latency.clear();
+        }
+        if config.wifi.is_empty() {
+            self.wifi = None;
+        }
+        self.net_probe = Some(config.clone());
+
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (tx, rx) = async_channel::bounded::<NetFrame>(2);
+        let started = spawn_thread("pc-specs-netprobe", move || {
+            let targets = netprobe::targets(config.gateway.as_deref(), &config.dns);
+            let mut wifi_due = Instant::now();
+            loop {
+                let began = Instant::now();
+                let read_wifi = !config.wifi.is_empty() && began >= wifi_due;
+                let frame = guarded("net probe", || {
+                    // 网卡每次都重新找：Wi-Fi 换成网线之后网关地址可能不变，网卡却换了。
+                    let interface = config
+                        .gateway
+                        .as_deref()
+                        .and_then(netprobe::gateway_interface);
+                    // Wi-Fi 详情要起外部命令，和延迟同时量，别让它拖慢这一轮。
+                    std::thread::scope(|scope| {
+                        let wifi = read_wifi.then(|| scope.spawn(|| netprobe::wifi(&config.wifi)));
+                        let sample =
+                            netprobe::measure(&targets, interface, pc_specs_core::util::now_ms());
+                        NetFrame {
+                            sample,
+                            wifi: wifi.map(|handle| handle.join().ok().flatten()),
+                        }
+                    })
+                });
+                if read_wifi {
+                    wifi_due = began + WIFI_EVERY;
+                }
+                if let Some(frame) = frame
+                    && tx.send_blocking(frame).is_err()
+                {
+                    break;
+                }
+                // 保持两秒一轮：这一轮用掉的时间（断网时要等超时）算在里面。
+                let wait = PROBE_EVERY
+                    .saturating_sub(began.elapsed())
+                    .max(Duration::from_millis(250));
+                if !matches!(stop_rx.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
+                    break;
+                }
+            }
+        });
+        if !started {
+            return;
+        }
+        self.net_stop = Some(stop_tx);
+        cx.spawn(async move |this, cx| {
+            while let Ok(frame) = rx.recv().await {
+                let accepted = this
+                    .update(cx, |this, cx| {
+                        if this.net_epoch != epoch {
+                            return false;
+                        }
+                        guarded("push net frame", || this.push_net_frame(frame));
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !accepted {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn stop_net_feed(&mut self) {
+        // 丢弃 Sender 即通知线程退出。
+        self.net_stop = None;
+        self.net_epoch = self.net_epoch.wrapping_add(1);
+    }
+
+    fn push_net_frame(&mut self, frame: NetFrame) {
+        self.latency.push_back(frame.sample);
+        while self.latency.len() > LATENCY_KEEP {
+            self.latency.pop_front();
+        }
+        if let Some(wifi) = frame.wifi {
+            self.wifi = wifi;
+        }
+    }
+
+    /// 流量累计清零，重新开始。
+    pub fn reset_usage(&mut self, cx: &mut Context<Self>) {
+        self.usage.reset();
+        cx.notify();
     }
 
     // ---- 本地 HTTP 服务 -----------------------------------------------------
@@ -1036,7 +1572,14 @@ impl AppState {
         if self.export.poster_busy {
             return;
         }
-        let svg = poster::build_svg(&self.export_snapshot(), &self.settings);
+        // 长图和 Markdown / JSON 遵守同一个隐私开关：不含敏感信息时，主机名也不能上图
+        // （海报上不留 `[redacted]` 字样，直接不显示）。
+        let include_sensitive = self.settings.export_sensitive;
+        let mut snapshot = exporter::redacted(&self.export_snapshot(), include_sensitive);
+        if !include_sensitive {
+            snapshot.host.hostname.clear();
+        }
+        let svg = poster::build_svg(&snapshot, &self.settings);
         let name = format!(
             "pc-specs-{}.png",
             chrono::Local::now().format("%Y%m%d-%H%M%S")
@@ -1045,7 +1588,7 @@ impl AppState {
     }
 
     /// 先让用户选保存位置，再在后台线程里生成内容并写入，最后弹 toast 告知结果。
-    fn save_with_dialog(
+    pub(crate) fn save_with_dialog(
         &mut self,
         suggested: String,
         marks_busy: bool,
@@ -1076,7 +1619,10 @@ impl AppState {
             });
             let Ok(result) = rx.recv().await else { return };
             let _ = this.update(cx, |this, cx| {
-                this.export.poster_busy = false;
+                // 只复位自己置的位：别处（比如导出存储 CSV）借用这个函数时，不该把海报的「生成中」冲掉。
+                if marks_busy {
+                    this.export.poster_busy = false;
+                }
                 match result {
                     Ok(path) => this.toast(
                         NotificationType::Success,
@@ -1135,7 +1681,7 @@ impl AppState {
     pub fn wall_opened(&mut self, handle: AnyWindowHandle, cx: &mut Context<Self>) {
         self.wall_window = Some(handle);
         self.sync_temperature_demand();
-        self.sync_process_feed(cx);
+        self.sync_feeds(cx);
         self.refresh_live(cx);
         cx.notify();
     }
@@ -1230,9 +1776,33 @@ impl AppState {
     }
 }
 
+/// 规则用的延迟读数：探测在跑、并且最近一次结果不太旧才算数，免得拿停了很久的旧数据下结论。
+fn fresh_latency(latency: &VecDeque<LatencySample>, running: bool) -> Option<&LatencySample> {
+    let sample = latency.back()?;
+    let age = pc_specs_core::util::now_ms().saturating_sub(sample.timestamp_ms);
+    (running && age <= RULE_LATENCY_FRESH_MS).then_some(sample)
+}
+
+/// 设置文件只有几 KB。选错了一个大文件，也不该整个读进内存。
+const MAX_SETTINGS_FILE: u64 = 1 << 20;
+
+fn read_settings_file(path: &std::path::Path) -> Result<String, ImportError> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|e| ImportError::Invalid(e.to_string()))?;
+    let mut text = String::new();
+    // 多读一个字节，就知道有没有超过上限。
+    file.take(MAX_SETTINGS_FILE + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| ImportError::Invalid(e.to_string()))?;
+    if text.len() as u64 > MAX_SETTINGS_FILE {
+        return Err(ImportError::NotSettings);
+    }
+    Ok(text)
+}
+
 /// 起一个后台线程。系统线程数用尽时 `spawn` 会失败：那只是这个功能这一轮用不了，
 /// 不该把整个进程带走。成功与否由返回值告诉调用方。
-fn spawn_thread(name: &str, f: impl FnOnce() + Send + 'static) -> bool {
+pub(crate) fn spawn_thread(name: &str, f: impl FnOnce() + Send + 'static) -> bool {
     match std::thread::Builder::new().name(name.into()).spawn(f) {
         Ok(_) => true,
         Err(e) => {
@@ -1240,6 +1810,27 @@ fn spawn_thread(name: &str, f: impl FnOnce() + Send + 'static) -> bool {
             false
         }
     }
+}
+
+/// 在后台线程里做一件会阻塞的事（网络请求、外部命令），做完回到界面线程处理结果。
+fn run_in_background<R: Send + 'static>(
+    name: &str,
+    work: impl FnOnce() -> R + Send + 'static,
+    done: impl FnOnce(&mut AppState, R, &mut Context<AppState>) + 'static,
+    cx: &mut Context<AppState>,
+) {
+    let (tx, rx) = async_channel::bounded(1);
+    if !spawn_thread(name, move || {
+        let _ = tx.send_blocking(work());
+    }) {
+        return;
+    }
+    cx.spawn(async move |this, cx| {
+        if let Ok(result) = rx.recv().await {
+            let _ = this.update(cx, |this, cx| done(this, result, cx));
+        }
+    })
+    .detach();
 }
 
 /// 采样器出了问题（panic）之后，隔多久再重建一个继续采。

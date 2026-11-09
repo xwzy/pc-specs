@@ -216,6 +216,22 @@
 | `disk_write_bps` | `u64` | 磁盘写速率 |
 | `elapsed_secs` | `f64` | 自上次采样以来的真实经过秒数；**首次请求为 `0`** |
 
+以上是最初的字段。之后新增的字段都是可选信息，旧客户端忽略即可：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `swap_used_bytes` / `swap_total_bytes` | `u64` | swap 已用 / 总量 |
+| `cpu_temperature_c` | `f32 \| null` | CPU 温度（℃）。Apple 芯片取各核心传感器的平均值（和 iStat Menus、Stats 一致），其他平台取封装温度；读不到就是 `null` |
+| `gpu_temperature_c` | `f32 \| null` | GPU 温度（℃），各 GPU 传感器的平均值；只有 Mac 读得到 |
+| `max_temperature_c` | `f32 \| null` | 所有温度传感器里的最高值（℃） |
+| `thermal_pressure` | `u8 \| null` | 系统的热压力等级：`0` 正常、`1` 中等、`2` 较重、`3` 严重（已在强制降频）、`4` 休眠。数字大了说明系统已经在压低性能来降温；只有 macOS 提供 |
+| `gpus` | `GpuTick[]` | 每块 GPU 的使用率、显存（`name`、`utilization`、`vram_used_bytes`、`vram_total_bytes`） |
+| `per_interface` | `InterfaceTick[]` | 每个网络接口的实时速率（`name`、`rx_bps`、`tx_bps`） |
+| `per_disk` | `DiskTick[]` | 每块物理盘的实时读写速率 |
+| `memory` | `object \| null` | 内存构成与压力：`app_bytes`、`wired_bytes`、`compressed_bytes`、`cached_bytes`、`free_bytes`、`pressure_percent`、`pressure_level`（0 正常 / 1 警告 / 2 严重）、`swapped_in_bytes`、`swapped_out_bytes`、`swap_in_bps`、`swap_out_bps`；平台读不到时为 `null` |
+| `load_average` | `[f32, f32, f32] \| null` | 1 / 5 / 15 分钟平均负载；Windows 没有这个概念，为 `null` |
+| `other_sensors` | [`SensorReading[]`](#611-sensorreading) | 风扇转速、功率、电压、电流（和温度一起刷新；读不到就是空数组） |
+
 **首次请求注意：** 速率类字段需要"上次"基线才有意义。第一次调用 `/api/v1/metrics` 时各 BPS 字段都是 `0`，且 `elapsed_secs == 0`。从第二次起返回真实值。
 
 ---
@@ -515,6 +531,7 @@
 | `vendor_id` | `string \| null` | USB Vendor ID（4 位 hex） |
 | `product_id` | `string \| null` | USB Product ID |
 | `bus` | `string \| null` | 总线（`"usb"` / `"bluetooth"` / `"pci"`） |
+| `battery_percent` | `u8 \| null` | 设备自己的电量（0–100）。目前只有已连接的蓝牙设备能读到（macOS、Linux） |
 
 ### 6.14 `DevEnvInfo` / `RuntimeInfo`
 

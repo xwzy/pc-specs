@@ -165,16 +165,41 @@ pub fn run_with(
     timeout: Duration,
     path_env: Option<&OsString>,
 ) -> Option<Output> {
-    let _slot = CommandSlot::acquire();
     let mut command = Command::new(cmd);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.args(args);
     if let Some(p) = path_env {
         command.env("PATH", p);
     }
+    execute(command, timeout)
+}
+
+/// 用系统自带的 shell 运行一段用户写的命令行（`sh -c` / `cmd /C`），额外的环境变量由调用方给。
+/// 超时、无法启动都返回 `None`；其余和 [`run_with`] 一样。
+pub fn run_shell(script: &str, env: &[(&str, &str)], timeout: Duration) -> Option<Output> {
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(script);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = Command::new("cmd");
+        // 脚本原样交给 cmd，不让 Rust 按 CreateProcess 的规则再转义一遍。
+        command.arg("/C").raw_arg(script);
+        command
+    };
+    command.envs(env.iter().copied());
+    execute(command, timeout)
+}
+
+fn execute(mut command: Command, timeout: Duration) -> Option<Output> {
+    let _slot = CommandSlot::acquire();
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -251,6 +276,24 @@ pub fn run_stdout(cmd: &str, args: &[&str]) -> Option<String> {
 pub fn run_stdout_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Option<String> {
     let o = run_with(cmd, args, timeout, None)?;
     o.ok.then_some(o.stdout)
+}
+
+/// 向 `url` POST 一段 JSON（Webhook）。只认 http / https，十秒内没有结果就放弃；
+/// 服务端回了 4xx / 5xx 同样算失败。
+pub fn post_json(url: &str, body: &str) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("the address must start with http:// or https://".into());
+    }
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .user_agent(concat!("pc-specs/", env!("CARGO_PKG_VERSION")))
+        .build();
+    ureq::Agent::new_with_config(config)
+        .post(url)
+        .header("Content-Type", "application/json")
+        .send(body)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// 在 `path_env`（缺省为进程 PATH）里查找可执行文件。

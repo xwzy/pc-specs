@@ -5,6 +5,8 @@
 
 use crate::model::{DiskTick, GpuTick, InterfaceTick, MonitorTick, ProcessInfo, SensorReading};
 use crate::modules::{cpu, gpu, network, sensors, storage};
+use crate::platform;
+use crate::process_net::NetSampler;
 use crate::util::now_ms;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -86,6 +88,9 @@ struct DiskPlan {
 
 pub struct Sampler {
     system: Option<System>,
+    /// macOS 上 CPU 使用率自己算（见 `platform::macos_cpu`），sysinfo 的读数只在这条路读不到时兜底。
+    #[cfg(target_os = "macos")]
+    cpu_load: crate::platform::macos_cpu::CpuLoad,
     #[cfg(not(target_os = "macos"))]
     networks: Option<Networks>,
     #[cfg(target_os = "macos")]
@@ -98,11 +103,25 @@ pub struct Sampler {
     /// 接口名 → 类型，名字只分类一次。
     net_kinds: HashMap<String, &'static str>,
     temperatures: Vec<SensorReading>,
+    /// 风扇、功率等：和温度同一个节奏读。
+    other_sensors: Vec<SensorReading>,
+    thermal_pressure: Option<u8>,
     temperatures_at: Option<Instant>,
     /// 温度传感器多久读一次；`None` 表示现在没人需要温度，一律不读。
     temperature_every: Option<Duration>,
     disks_listed_at: Instant,
     last_at: Option<Instant>,
+    /// 上一次的累计换入 / 换出字节数，用来算换页速率。
+    swapped_before: Option<(u64, u64)>,
+}
+
+/// 1 / 5 / 15 分钟平均负载。Windows 没有这个概念（sysinfo 在那里恒为 0），不提供。
+fn load_average() -> Option<[f32; 3]> {
+    if cfg!(windows) {
+        return None;
+    }
+    let load = System::load_average().ok()?;
+    Some([load.one as f32, load.five as f32, load.fifteen as f32])
 }
 
 impl Default for Sampler {
@@ -121,6 +140,12 @@ impl Sampler {
         }
         let now = Instant::now();
         #[cfg(target_os = "macos")]
+        let cpu_load = {
+            let mut load = crate::platform::macos_cpu::CpuLoad::default();
+            let _ = load.sample();
+            load
+        };
+        #[cfg(target_os = "macos")]
         let native_net = {
             // 先读一遍当基线，第一个采样才有增量可算。
             let mut native = NativeNet::default();
@@ -132,6 +157,8 @@ impl Sampler {
         let disks = Disks::new_with_refreshed_list().ok();
         Self {
             system,
+            #[cfg(target_os = "macos")]
+            cpu_load,
             #[cfg(not(target_os = "macos"))]
             networks,
             #[cfg(target_os = "macos")]
@@ -143,10 +170,13 @@ impl Sampler {
             components: Components::new_with_refreshed_list().ok(),
             net_kinds: HashMap::new(),
             temperatures: Vec::new(),
+            other_sensors: Vec::new(),
+            thermal_pressure: None,
             temperatures_at: None,
             temperature_every: Some(TEMPERATURE_TTL),
             disks_listed_at: now,
             last_at: Some(now),
+            swapped_before: None,
         }
     }
 
@@ -157,6 +187,8 @@ impl Sampler {
         if every.is_none() {
             // 不再需要了：缓存的旧读数不能留着，下次再要的时候重新读。
             self.temperatures = Vec::new();
+            self.other_sensors = Vec::new();
+            self.thermal_pressure = None;
             self.temperatures_at = None;
         }
     }
@@ -192,6 +224,31 @@ impl Sampler {
             tick.swap_used_bytes = sys.used_swap();
             tick.swap_total_bytes = sys.total_swap();
         }
+        #[cfg(target_os = "macos")]
+        if let Some(usage) = self.cpu_load.sample() {
+            tick.cpu_per_core = usage.per_core;
+            tick.cpu_overall = usage.overall;
+        }
+        tick.memory = platform::memory_breakdown().map(|mut memory| {
+            // 累计量换算成速率；第一次没有上一次可比，记 0。
+            if let Some((before_in, before_out)) = self
+                .swapped_before
+                .replace((memory.swapped_in_bytes, memory.swapped_out_bytes))
+            {
+                memory.swap_in_bps = rate(memory.swapped_in_bytes.saturating_sub(before_in));
+                memory.swap_out_bps = rate(memory.swapped_out_bytes.saturating_sub(before_out));
+            }
+            // 几部分加起来要正好是总量：各平台统计口径之外的零头（固件保留之类）算作空闲。
+            let accounted = memory.app_bytes
+                + memory.wired_bytes
+                + memory.compressed_bytes
+                + memory.cached_bytes;
+            if tick.mem_total_bytes > 0 {
+                memory.free_bytes = tick.mem_total_bytes.saturating_sub(accounted);
+            }
+            memory
+        });
+        tick.load_average = load_average();
 
         if let Some(interfaces) = self.read_networks() {
             let (mut rx_counted, mut tx_counted) = (0u64, 0u64);
@@ -315,13 +372,24 @@ impl Sampler {
 
         if let Some(every) = self.temperature_every {
             if self.temperatures_at.is_none_or(|t| t.elapsed() >= every) {
-                if let Some(c) = self.components.as_mut() {
+                let mut temperatures = self.components.as_mut().map_or_else(Vec::new, |c| {
                     c.refresh(false);
-                    self.temperatures = sensors::temperatures(c);
-                }
+                    sensors::temperatures(c)
+                });
+                // 平台自己的传感器里也有温度（macOS 的 CPU / GPU 逐核温度），并进温度列表，其余归「其他」。
+                let (platform_temperatures, others): (Vec<_>, Vec<_>) =
+                    crate::platform::live_sensors()
+                        .into_iter()
+                        .partition(|r| r.kind == "temperature");
+                temperatures.extend(platform_temperatures);
+                self.temperatures = temperatures;
+                self.other_sensors = others;
+                self.thermal_pressure = platform::thermal_pressure();
                 self.temperatures_at = Some(Instant::now());
             }
             tick.temperatures = self.temperatures.clone();
+            tick.other_sensors = self.other_sensors.clone();
+            tick.thermal_pressure = self.thermal_pressure;
         }
 
         tick
@@ -407,6 +475,10 @@ fn sample_delay(last_at: Option<Instant>, now: Instant) -> Duration {
 pub struct ProcessSampler {
     system: Option<System>,
     last_at: Option<Instant>,
+    /// 按进程统计网络流量。要另外读一遍套接字表，所以只在有人看的时候才开（见 [`Self::set_network`]）。
+    net: Option<NetSampler>,
+    /// 最近一次 `sample` 有没有拿到网络流量：刚开始统计、还在建基线的那一帧没有，不能当成「零流量」。
+    net_ready: bool,
 }
 
 impl Default for ProcessSampler {
@@ -420,6 +492,8 @@ impl ProcessSampler {
         let mut s = Self {
             system: System::new().ok(),
             last_at: None,
+            net: None,
+            net_ready: false,
         };
         // 建立基线：进程的 CPU / IO 同样是两次刷新之间的差值。
         s.refresh();
@@ -442,6 +516,25 @@ impl ProcessSampler {
         }
     }
 
+    /// 开关每个进程的网络流量统计。系统不支持（[`crate::process_net::SUPPORTED`]）时开了也没有数据。
+    /// 打开时马上读一遍套接字作为基线，下一次 `sample` 就能给出速率。
+    pub fn set_network(&mut self, on: bool) {
+        if on == self.net.is_some() {
+            return;
+        }
+        self.net_ready = false;
+        self.net = on.then(|| {
+            let mut net = NetSampler::new();
+            let _ = net.sample();
+            net
+        });
+    }
+
+    /// 最近一次 [`Self::sample`] 里的网络流量是不是有效的。
+    pub fn network_ready(&self) -> bool {
+        self.net_ready
+    }
+
     /// 全部进程，未排序。`cpu_percent` 以单核满载为 100%，多线程进程可以超过 100。
     pub fn sample(&mut self) -> Vec<ProcessInfo> {
         let now = Instant::now();
@@ -450,6 +543,8 @@ impl ProcessSampler {
             .replace(now)
             .map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f64());
         self.refresh();
+        let traffic = self.net.as_mut().and_then(NetSampler::sample);
+        self.net_ready = traffic.is_some();
         let rate = |bytes: u64| -> u64 {
             if elapsed >= MIN_RATE_INTERVAL {
                 (bytes as f64 / elapsed).round() as u64
@@ -464,13 +559,24 @@ impl ProcessSampler {
             .values()
             .map(|p| {
                 let io = p.disk_usage();
+                let pid = p.pid().as_u32();
+                let (net_rx_bps, net_tx_bps) = traffic
+                    .as_ref()
+                    .and_then(|traffic| traffic.get(&pid))
+                    .copied()
+                    .unwrap_or_default();
                 ProcessInfo {
-                    pid: p.pid().as_u32(),
+                    pid,
                     name: p.name().to_string_lossy().into_owned(),
                     cpu_percent: p.cpu_usage(),
-                    mem_bytes: p.memory(),
+                    // 系统自带的任务管理器怎么算就怎么算，读不到的进程才用 sysinfo 的 RSS。
+                    mem_bytes: platform::process_memory(pid)
+                        .filter(|bytes| *bytes > 0)
+                        .unwrap_or_else(|| p.memory()),
                     read_bps: rate(io.read_bytes),
                     write_bps: rate(io.written_bytes),
+                    net_rx_bps,
+                    net_tx_bps,
                 }
             })
             .collect()

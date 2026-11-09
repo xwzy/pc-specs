@@ -51,6 +51,8 @@ pub fn displays_asleep() -> bool {
 /// 位图自己带了留白，所以把间距登记成 0。只登记默认值：用户用 `defaults` 自己设过就以用户为准。
 /// 必须在创建第一个菜单栏项之前调用。
 pub fn prepare() {
+    // 选中态改成矩形底色，同样要赶在第一个状态项出现之前。
+    super::selection::install();
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let defaults = NSUserDefaults::standardUserDefaults();

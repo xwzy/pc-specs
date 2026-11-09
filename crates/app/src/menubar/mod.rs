@@ -6,6 +6,8 @@ pub mod data;
 pub mod native;
 pub mod panel;
 pub mod preferences;
+#[cfg(target_os = "macos")]
+mod selection;
 #[cfg(any(target_os = "macos", test))]
 pub mod status_image;
 pub(crate) mod widgets;

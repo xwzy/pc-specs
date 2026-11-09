@@ -3,6 +3,7 @@
 use crate::settings::{Language, NetUnit, Settings, SizeUnit, TempUnit, ThemePref};
 use crate::state::{AppState, LookupState};
 use crate::ui;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
@@ -10,8 +11,9 @@ use gpui_kit::{
     AnyElement, App, Entity, IntoElement as _, ParentElement as _, Styled as _, div,
     prelude::FluentBuilder as _, rems,
 };
-use pc_specs_core::server::ServerStatus;
+use pc_specs_core::server::{self, ServerStatus};
 use rust_i18n::t;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
     let s = state.read(cx);
@@ -204,14 +206,19 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
             ))
             .child({
                 let state = state.clone();
-                Button::new("settings-configure-bar")
-                    .small()
-                    .outline()
-                    .label(t!("bar_configure").into_owned())
-                    .on_click(move |_, _, cx| {
-                        state.update(cx, |s, cx| s.set_page(crate::state::Page::MenuBar, cx))
-                    })
-                    .into_any_element()
+                row(
+                    t!("bar_title").into_owned(),
+                    Some(t!("bar_description").into_owned()),
+                    Button::new("settings-configure-bar")
+                        .small()
+                        .outline()
+                        .label(t!("bar_configure").into_owned())
+                        .on_click(move |_, _, cx| {
+                            state.update(cx, |s, cx| s.set_page(crate::state::Page::MenuBar, cx))
+                        })
+                        .into_any_element(),
+                    cx,
+                )
             });
     }
     let tray = ui::section("settings-tray", t!("settings_tray_section").into_owned()).child(tray);
@@ -233,16 +240,7 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
     ));
 
     // ---- 本地 HTTP 接口与公网 IP ----
-    let status = match s.server_status() {
-        None => t!("settings_server_off").into_owned(),
-        Some(ServerStatus::Starting) => t!("settings_server_starting").into_owned(),
-        Some(ServerStatus::Listening(addr)) => {
-            t!("settings_server_listening", addr = addr.to_string()).into_owned()
-        }
-        Some(ServerStatus::Failed(error)) => {
-            t!("settings_server_failed", error = error).into_owned()
-        }
-    };
+    let status = server_status_row(state, s.server_status(), cx);
     let ip_state = state.clone();
     let clear_state = state.clone();
     let fetching = s.public_ip == LookupState::Loading;
@@ -276,12 +274,7 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
                     ),
                     cx,
                 ))
-                .child(row(
-                    t!("settings_server_status").into_owned(),
-                    None,
-                    ui::muted(status.clone(), cx).into_any_element(),
-                    cx,
-                ))
+                .child(status)
             })
             .child(row(
                 t!("net_query_public").into_owned(),
@@ -331,6 +324,41 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
         cx,
     ));
 
+    // ---- 备份与恢复 ----
+    let backup = ui::section(
+        "settings-backup",
+        t!("settings_backup_section").into_owned(),
+    )
+    .child(row(
+        t!("settings_backup_title").into_owned(),
+        Some(t!("settings_backup_desc").into_owned()),
+        {
+            let (export_state, import_state) = (state.clone(), state.clone());
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("settings-backup-export")
+                        .small()
+                        .outline()
+                        .label(t!("settings_backup_export").into_owned())
+                        .on_click(move |_, _, cx| {
+                            export_state.update(cx, |s, cx| s.export_settings(cx));
+                        }),
+                )
+                .child(
+                    Button::new("settings-backup-import")
+                        .small()
+                        .outline()
+                        .label(t!("settings_backup_import").into_owned())
+                        .on_click(move |_, _, cx| {
+                            import_state.update(cx, |s, cx| s.import_settings(cx));
+                        }),
+                )
+                .into_any_element()
+        },
+        cx,
+    ));
+
     // ---- 关于 ----
     let config_path = Settings::path();
     let reveal = config_path.clone().map(|path| {
@@ -345,22 +373,25 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
         v_flex()
             .gap_3()
             .child(ui::muted(t!("settings_about_desc").into_owned(), cx))
-            .child(ui::spec_list(vec![
-                (
-                    t!("settings_about_version").into_owned(),
-                    env!("CARGO_PKG_VERSION").to_string(),
-                ),
-                (
-                    t!("settings_about_platform").into_owned(),
-                    format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
-                ),
-                (
-                    t!("settings_about_config").into_owned(),
-                    config_path
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default(),
-                ),
-            ]))
+            .child(ui::spec_list(
+                vec![
+                    (
+                        t!("settings_about_version").into_owned(),
+                        env!("CARGO_PKG_VERSION").to_string(),
+                    ),
+                    (
+                        t!("settings_about_platform").into_owned(),
+                        format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
+                    ),
+                    (
+                        t!("settings_about_config").into_owned(),
+                        config_path
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default(),
+                    ),
+                ],
+                cx,
+            ))
             .when_some(reveal, |this, button| this.child(h_flex().child(button)))
             .child(ui::muted(t!("settings_about_privacy").into_owned(), cx).text_xs()),
     );
@@ -368,7 +399,7 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
     ui::page(
         "page-settings",
         t!("settings_title").into_owned(),
-        None,
+        Some(t!("settings_desc").into_owned().into()),
         vec![],
         vec![
             appearance.into_any_element(),
@@ -378,10 +409,116 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
             floating.into_any_element(),
             network.into_any_element(),
             export.into_any_element(),
+            backup.into_any_element(),
             about.into_any_element(),
         ],
         cx,
     )
+}
+
+/// 在本机访问接口服务该用的地址：监听 0.0.0.0 时，本机用回环地址访问。
+fn local_url(addr: SocketAddr) -> String {
+    let ip = if addr.ip().is_unspecified() {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    } else {
+        addr.ip()
+    };
+    format!("http://{}", SocketAddr::new(ip, addr.port()))
+}
+
+/// 接口服务的状态行：监听中给出能直接访问的地址（可复制、可打开），
+/// 启动失败给出原因和「重试」按钮。
+fn server_status_row(
+    state: &Entity<AppState>,
+    status: Option<ServerStatus>,
+    cx: &App,
+) -> AnyElement {
+    let title = t!("settings_server_status").into_owned();
+    match status {
+        None => row(
+            title,
+            None,
+            ui::muted(t!("settings_server_off").into_owned(), cx).into_any_element(),
+            cx,
+        ),
+        Some(ServerStatus::Starting) => row(
+            title,
+            None,
+            ui::muted(t!("settings_server_starting").into_owned(), cx).into_any_element(),
+            cx,
+        ),
+        Some(ServerStatus::Listening(addr)) => {
+            let url = local_url(addr);
+            let copy_state = state.clone();
+            let copy_url = url.clone();
+            let open_url = url.clone();
+            row(
+                title,
+                Some(t!("settings_server_listening", addr = addr.to_string()).into_owned()),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().text_sm().child(url))
+                    .child(
+                        Button::new("settings-server-copy")
+                            .small()
+                            .outline()
+                            .icon(IconName::Copy)
+                            .label(t!("settings_server_copy").into_owned())
+                            .on_click(move |_, _, cx| {
+                                let url = copy_url.clone();
+                                copy_state.update(cx, |s, cx| s.copy_to_clipboard(url, cx));
+                            }),
+                    )
+                    .child(
+                        Button::new("settings-server-open")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ExternalLink)
+                            .accessibility_label(t!("settings_server_open").into_owned())
+                            .tooltip(t!("settings_server_open").into_owned())
+                            .on_click(move |_, _, cx| cx.open_url(&open_url)),
+                    )
+                    .into_any_element(),
+                cx,
+            )
+        }
+        Some(ServerStatus::Failed(error)) => {
+            let retry_state = state.clone();
+            row(
+                title,
+                Some(
+                    t!(
+                        "settings_server_failed_hint",
+                        error = error,
+                        port = server::DEFAULT_PORT
+                    )
+                    .into_owned(),
+                ),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().danger)
+                            .child(t!("settings_server_failed").into_owned()),
+                    )
+                    .child(
+                        Button::new("settings-server-retry")
+                            .small()
+                            .outline()
+                            .icon(IconName::RefreshCw)
+                            .label(t!("settings_server_retry").into_owned())
+                            .on_click(move |_, _, cx| {
+                                retry_state.update(cx, |s, cx| s.restart_server(cx));
+                            }),
+                    )
+                    .into_any_element(),
+                cx,
+            )
+        }
+    }
 }
 
 /// 左侧标题 / 说明，右侧控件。

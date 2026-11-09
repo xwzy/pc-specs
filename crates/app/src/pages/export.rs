@@ -3,7 +3,7 @@
 use crate::state::{AppState, ExportFormat};
 use crate::ui;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
@@ -37,16 +37,18 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         Button::new(id).small().outline().icon(icon).label(label)
     };
 
+    // 格式切换和「重新生成」只作用于预览，放在预览标题栏里，顶部操作区只留三个主操作。
     let regenerate = {
         let state = state.clone();
         let format = export.format;
-        action(
-            "export-regenerate",
-            IconName::RefreshCw,
-            t!("export_btn_refresh").into_owned(),
-        )
-        .on_click(move |_, _, cx| state.update(cx, |s, cx| s.generate_export(format, cx)))
-        .into_any_element()
+        Button::new("export-regenerate")
+            .small()
+            .ghost()
+            .icon(IconName::RefreshCw)
+            .accessibility_label(t!("export_btn_refresh").into_owned())
+            .tooltip(t!("export_btn_refresh").into_owned())
+            .on_click(move |_, _, cx| state.update(cx, |s, cx| s.generate_export(format, cx)))
+            .into_any_element()
     };
     let copy = {
         let state = state.clone();
@@ -148,10 +150,6 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
                 .font_semibold()
                 .child(t!("export_preview").into_owned()),
         )
-        .child(ui::chip(match export.format {
-            ExportFormat::Markdown => "MARKDOWN",
-            ExportFormat::Json => "JSON",
-        }))
         .child(ui::muted(format!("{chars} {}", t!("export_chars_suffix")), cx).text_xs())
         .when(sensitive, |this| {
             this.child(
@@ -161,7 +159,15 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
                 )
                 .small(),
             )
-        });
+        })
+        .child(
+            h_flex()
+                .ml_auto()
+                .items_center()
+                .gap_1()
+                .child(format)
+                .child(regenerate),
+        );
 
     let preview_body = match &export.text {
         Some(text) => div()
@@ -194,7 +200,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
     ui::page_fill(
         t!("export_title").into_owned(),
         Some(SharedString::from(t!("export_desc").into_owned())),
-        vec![format, regenerate, copy, save, png],
+        vec![copy, save, png],
         v_flex().size_full().gap_3().child(privacy).child(preview),
         cx,
     )

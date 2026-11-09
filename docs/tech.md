@@ -411,7 +411,7 @@ pub struct MonitorTick {
 - `sysctl` 解析 hw.* 给出 CPU brand、cores、l1/l2/l3、memsize。
 - `system_profiler -json SPDisplaysDataType / SPHardwareDataType / SPMemoryDataType / SPNVMeDataType / SPPowerDataType`。
 - IOKit（`io-kit-sys`）枚举显示器、电池。
-- SMC 温度需要 root，未取到则空。
+- 温度：sysinfo 读 HID 传感器，再用 SMC（`AppleSMC`，普通用户权限即可）读 CPU / GPU 逐核温度；按芯片代际（M1–M6、A18 Pro）内置了一份传感器键表，只读键表里的键，读不出或超出 10–125 ℃ 的当作无效。CPU 温度取逐核的平均值，口径和 iStat Menus、Stats 一致；HID 里的 `PMU tdie*` 是电源管理芯片，比核心低三十多度，只在读不到逐核传感器时当参考。
 - M 系列芯片：`sysctl` 直接给出 P/E core 数量、神经网络引擎。
 
 ### 5.4 Linux 特化
@@ -475,12 +475,9 @@ pub struct MonitorTick {
 
 ## 9. 构建 & 发布
 
-- 开发：`pnpm i` → `pnpm tauri dev`（用户日常开发用）。
-- 仅前端（用户可单独跑 UI）：`pnpm dev`。
-- 验证编译（CI / 本地非完整构建）：
-  - 前端：`pnpm typecheck`（`tsc -b --noEmit`）。
-  - 后端：`cargo check --manifest-path src-tauri/Cargo.toml`（按项目规范，本仓库默认只 check，不构建完整 app 包）。
-- 发布：`pnpm tauri build`（CI/CD 使用，签名 / 公证另行配置）。
+项目已经是纯 Rust 的 GPUI 应用（本文档其余部分是迁移前的 Tauri 设计，仅供参考）。构建、打包、签名、发布和版本管理见 README 的「打包与发布」一节，脚本在 `scripts/`，发布工作流是 `.github/workflows/release.yml`。
+
+- 开发：`cargo run -p pc-specs`；校验编译：`cargo check --workspace`；测试：`cargo test --workspace`。
 
 ---
 

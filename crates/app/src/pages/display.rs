@@ -87,21 +87,21 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
         );
 
     let mut body = vec![preview.into_any_element()];
-    body.extend(displays.iter().enumerate().map(|(i, d)| card(i, d)));
+    body.extend(displays.iter().enumerate().map(|(i, d)| card(i, d, cx)));
 
     ui::page(
         "page-display",
         t!("nav_display").into_owned(),
-        Some(SharedString::from(
-            t!("count_found", n = displays.len()).into_owned(),
-        )),
+        // 只有一块屏幕时「共 1 项」没有信息量。
+        (displays.len() > 1)
+            .then(|| SharedString::from(t!("count_found", n = displays.len()).into_owned())),
         vec![],
         body,
         cx,
     )
 }
 
-fn card(index: usize, d: &DisplayInfo) -> AnyElement {
+fn card(index: usize, d: &DisplayInfo, cx: &App) -> AnyElement {
     let mut items = vec![
         (
             t!("spec_resolution").into_owned(),
@@ -156,7 +156,7 @@ fn card(index: usize, d: &DisplayInfo) -> AnyElement {
                 .when(d.is_primary, |this| {
                     this.child(h_flex().child(ui::chip(t!("disp_primary").into_owned())))
                 })
-                .child(ui::spec_list(items)),
+                .child(ui::spec_list(items, cx)),
         )
         .into_any_element()
 }

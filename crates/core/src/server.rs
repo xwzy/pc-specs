@@ -12,8 +12,8 @@
 
 use crate::model::{
     BatteryInfo, CpuInfo, DevEnvInfo, DiskTick, DisplayInfo, GpuInfo, GpuTick, HostInfo,
-    InterfaceTick, MemoryInfo, MonitorTick, MotherboardInfo, NetworkInfo, OsInfo, PeripheralInfo,
-    SensorReading, StorageInfo, SystemSnapshot,
+    InterfaceTick, MemoryBreakdown, MemoryInfo, MonitorTick, MotherboardInfo, NetworkInfo, OsInfo,
+    PeripheralInfo, SensorReading, StorageInfo, SystemSnapshot,
 };
 use crate::monitor::Sampler;
 use crate::util::{guarded, now_ms};
@@ -265,10 +265,15 @@ struct LightMetrics {
     swap_used_bytes: u64,
     swap_total_bytes: u64,
     cpu_temperature_c: Option<f32>,
+    gpu_temperature_c: Option<f32>,
     max_temperature_c: Option<f32>,
+    thermal_pressure: Option<u8>,
     gpus: Vec<GpuTick>,
     per_interface: Vec<InterfaceTick>,
     per_disk: Vec<DiskTick>,
+    memory: Option<MemoryBreakdown>,
+    load_average: Option<[f32; 3]>,
+    other_sensors: Vec<SensorReading>,
 }
 
 #[derive(Serialize)]
@@ -481,7 +486,9 @@ async fn metrics_throttled(state: &Arc<ServerState>) -> Result<Arc<LightMetrics>
     let metrics = Arc::new(LightMetrics {
         timestamp_ms: tick.timestamp,
         cpu_temperature_c: tick.cpu_temperature(),
+        gpu_temperature_c: tick.gpu_temperature(),
         max_temperature_c: tick.max_temperature(),
+        thermal_pressure: tick.thermal_pressure,
         cpu_overall: tick.cpu_overall,
         cpu_per_core: tick.cpu_per_core,
         mem_used_bytes: tick.mem_used_bytes,
@@ -496,6 +503,9 @@ async fn metrics_throttled(state: &Arc<ServerState>) -> Result<Arc<LightMetrics>
         gpus: tick.gpus,
         per_interface: tick.per_interface,
         per_disk: tick.per_disk,
+        memory: tick.memory,
+        load_average: tick.load_average,
+        other_sensors: tick.other_sensors,
     });
     *state.metrics_cache.lock() = Some((Instant::now(), metrics.clone()));
     Ok(metrics)

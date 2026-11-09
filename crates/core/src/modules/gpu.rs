@@ -1,4 +1,5 @@
-use crate::model::GpuInfo;
+use crate::model::{GpuInfo, SensorReading};
+use crate::modules::sensors;
 use sysinfo::Gpus;
 
 /// 平台侧补充信息（驱动 / PCIe 链路 / 核心数 / 显存兜底）。
@@ -74,6 +75,27 @@ pub fn collect() -> Vec<GpuInfo> {
         g.index = i as u32;
     }
     out
+}
+
+/// 从传感器读数里挑出 GPU 温度：GPU 各个传感器的平均值，口径和 CPU 温度一致。
+pub fn gpu_temperature(sensors: &[SensorReading]) -> Option<f32> {
+    let values: Vec<f32> = sensors
+        .iter()
+        .filter(|s| s.kind == "temperature" && s.value.is_finite())
+        .filter(|s| sensors::is_gpu_core(&s.label))
+        .map(|s| s.value)
+        .collect();
+    (!values.is_empty()).then(|| values.iter().sum::<f32>() / values.len() as f32)
+}
+
+/// 用传感器读数补上 GPU 温度。传感器读数没有标明属于哪块 GPU，所以只在整机只有一块 GPU
+/// （Apple 芯片、核显笔记本）时才补，多块的时候宁可空着也不张冠李戴。
+pub fn enrich_with_sensors(gpus: &mut [GpuInfo], sensors: &[SensorReading]) {
+    if let [gpu] = gpus
+        && let Some(temperature) = gpu_temperature(sensors)
+    {
+        gpu.temperature_c = Some(temperature);
+    }
 }
 
 fn native_api() -> &'static str {
@@ -356,4 +378,65 @@ fn extras(keys: &[GpuKey]) -> Vec<Extra> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp(label: &str, value: f32) -> SensorReading {
+        SensorReading {
+            source: "test".to_string(),
+            label: label.to_string(),
+            kind: "temperature".to_string(),
+            value,
+            unit: "C".to_string(),
+        }
+    }
+
+    fn gpu(name: &str) -> GpuInfo {
+        GpuInfo {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn averages_the_gpu_sensors() {
+        let sensors = vec![
+            temp("CPU performance core 1", 90.0),
+            temp("GPU 1", 70.0),
+            temp("GPU 2", 80.0),
+            temp("PMU tdie0", 57.0),
+        ];
+        assert_eq!(gpu_temperature(&sensors), Some(75.0));
+    }
+
+    #[test]
+    fn intel_mac_gpu_sensor_is_recognised() {
+        assert_eq!(gpu_temperature(&[temp("GPU", 61.0)]), Some(61.0));
+    }
+
+    #[test]
+    fn no_gpu_sensor_means_no_temperature() {
+        let sensors = vec![
+            temp("CPU performance core 1", 90.0),
+            temp("nvme Composite", 40.0),
+        ];
+        assert_eq!(gpu_temperature(&sensors), None);
+    }
+
+    #[test]
+    fn only_a_machine_with_exactly_one_gpu_gets_the_reading() {
+        let sensors = vec![temp("GPU 1", 70.0)];
+
+        let mut one = vec![gpu("Apple M2 Max")];
+        enrich_with_sensors(&mut one, &sensors);
+        assert_eq!(one[0].temperature_c, Some(70.0));
+
+        // 两块 GPU 时分不清读数属于哪块，宁可空着。
+        let mut two = vec![gpu("Intel UHD"), gpu("AMD Radeon Pro")];
+        enrich_with_sensors(&mut two, &sensors);
+        assert!(two.iter().all(|g| g.temperature_c.is_none()));
+    }
 }

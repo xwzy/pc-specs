@@ -1,5 +1,5 @@
 use super::CpuDetails;
-use crate::model::{MemoryModule, MotherboardInfo, SensorReading};
+use crate::model::{MemoryBreakdown, MemoryModule, MotherboardInfo, SensorReading};
 use crate::util::clean_dmi;
 use serde::Deserialize;
 use wmi::WMIConnection;
@@ -457,6 +457,60 @@ pub fn extra_sensors() -> Vec<SensorReading> {
             })
         })
         .collect()
+}
+
+/// 物理内存的构成。Windows 能分得清的只有内核的非分页池和「可用」，其余都算应用占用。
+pub fn memory_breakdown() -> Option<MemoryBreakdown> {
+    use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
+
+    let mut info = PERFORMANCE_INFORMATION::default();
+    let size = std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
+    // SAFETY: 结构体和长度都由我们提供，函数只往里面写数字。
+    unsafe { GetPerformanceInfo(&mut info, size) }.ok()?;
+    let page = info.PageSize as u64;
+    let total = (info.PhysicalTotal as u64).saturating_mul(page);
+    let free = (info.PhysicalAvailable as u64)
+        .saturating_mul(page)
+        .min(total);
+    let used = total - free;
+    let wired = (info.KernelNonpaged as u64).saturating_mul(page).min(used);
+    Some(MemoryBreakdown {
+        app_bytes: used - wired,
+        wired_bytes: wired,
+        free_bytes: free,
+        ..Default::default()
+    })
+}
+
+/// 进程的专用工作集：任务管理器「内存」一列的口径。sysinfo 给的是整个工作集，
+/// 连和别的进程共享的 DLL 页一起算，浏览器这类多进程应用会被高估很多。
+/// 受保护的系统进程、权限不够的进程读不到。
+pub fn process_memory(pid: u32) -> Option<u64> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2,
+    };
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
+    let mut counters = PROCESS_MEMORY_COUNTERS_EX2 {
+        cb: size,
+        ..Default::default()
+    };
+    // SAFETY: 句柄是 `OpenProcess` 刚给的，用完就关；缓冲区是一个 `PROCESS_MEMORY_COUNTERS_EX2`，
+    // 长度如实传入（它以 `PROCESS_MEMORY_COUNTERS` 开头，接口按 `cb` 决定写多少）。
+    let result = unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let result = GetProcessMemoryInfo(
+            process,
+            (&mut counters as *mut PROCESS_MEMORY_COUNTERS_EX2).cast::<PROCESS_MEMORY_COUNTERS>(),
+            size,
+        );
+        let _ = CloseHandle(process);
+        result
+    };
+    result.ok()?;
+    Some(counters.PrivateWorkingSetSize as u64)
 }
 
 pub fn desktop_env() -> Option<String> {

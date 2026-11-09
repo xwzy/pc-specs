@@ -43,6 +43,9 @@ impl SystemSnapshot {
                 g.vram_used_bytes = t.vram_used_bytes.or(g.vram_used_bytes);
             }
         }
+        // 温度只在界面开着温度读数时才有；没有就保留快照里的。
+        crate::modules::cpu::enrich_with_sensors(&mut self.cpu, &tick.temperatures);
+        crate::modules::gpu::enrich_with_sensors(&mut self.gpus, &tick.temperatures);
     }
 }
 
@@ -125,6 +128,29 @@ pub struct MemoryInfo {
     pub swap_total_bytes: u64,
     pub swap_used_bytes: u64,
     pub modules: Vec<MemoryModule>,
+}
+
+/// 内存的构成（字节）。各平台能区分的项不一样，区分不出来的就是 0。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MemoryBreakdown {
+    /// 应用程序占用。
+    pub app_bytes: u64,
+    /// 系统内核和驱动占用，不能被换出。
+    pub wired_bytes: u64,
+    /// 被压缩存放的部分。
+    pub compressed_bytes: u64,
+    /// 文件缓存等可以随时回收的部分。
+    pub cached_bytes: u64,
+    pub free_bytes: u64,
+    /// 内存压力 0–100，越高越紧张；系统不提供时为 `None`。
+    pub pressure_percent: Option<f32>,
+    /// 内存压力等级：0 正常、1 警告、2 严重。
+    pub pressure_level: Option<u8>,
+    /// 自开机累计换入 / 换出交换空间的字节数，采样器据此算出下面的速率。
+    pub swapped_in_bytes: u64,
+    pub swapped_out_bytes: u64,
+    pub swap_in_bps: u64,
+    pub swap_out_bps: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -226,6 +252,10 @@ pub struct BatteryInfo {
     pub time_to_empty_secs: Option<u64>,
     pub time_to_full_secs: Option<u64>,
     pub power_now_mw: Option<i64>,
+    /// 电池健康度（%）：macOS 取系统自己报的「最大容量」（和「系统设置」里一致），
+    /// 其他平台是满电容量 / 设计容量。
+    #[serde(default)]
+    pub health_percent: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -235,6 +265,9 @@ pub struct PeripheralInfo {
     pub vendor_id: Option<String>,
     pub product_id: Option<String>,
     pub bus: Option<String>,
+    /// 设备自己的电量（百分比）。目前只有已连接的蓝牙设备（键盘、鼠标、耳机……）能读到。
+    #[serde(default)]
+    pub battery_percent: Option<u8>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -267,12 +300,25 @@ pub struct MonitorTick {
     pub mem_total_bytes: u64,
     pub swap_used_bytes: u64,
     pub swap_total_bytes: u64,
+    /// 内存构成、压力和换页速率；平台读不到时为 `None`。
+    #[serde(default)]
+    pub memory: Option<MemoryBreakdown>,
+    /// 1 / 5 / 15 分钟平均负载；Windows 没有这个概念。
+    #[serde(default)]
+    pub load_average: Option<[f32; 3]>,
     pub net_rx_bps: u64,
     pub net_tx_bps: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub gpus: Vec<GpuTick>,
     pub temperatures: Vec<SensorReading>,
+    /// 随温度一起刷新的其余传感器：风扇转速、功率、电压、电流。
+    #[serde(default)]
+    pub other_sensors: Vec<SensorReading>,
+    /// 系统的热压力等级：0 正常、1 中等、2 较重、3 严重、4 休眠。数字大了说明系统已经在压低性能来降温。
+    /// 和温度一起刷新；只有 macOS 提供。
+    #[serde(default)]
+    pub thermal_pressure: Option<u8>,
     /// 每接口的实时速率，按名字关联到 `NetworkInterface`。
     pub per_interface: Vec<InterfaceTick>,
     /// 每块物理盘的实时读写速率（已按物理设备去重）。
@@ -280,12 +326,18 @@ pub struct MonitorTick {
 }
 
 impl MonitorTick {
-    /// CPU / SoC 相关的最高温度。
+    /// CPU 温度。Apple 芯片取逐核传感器的平均值（和 iStat Menus / Stats 一致），
+    /// 其他平台取封装温度。口径见 [`crate::modules::cpu::cpu_temperature`]。
     pub fn cpu_temperature(&self) -> Option<f32> {
         crate::modules::cpu::cpu_temperature(&self.temperatures)
     }
 
-    /// 所有温度传感器里的最高值。
+    /// GPU 温度（各传感器平均）；读不到时为 `None`。
+    pub fn gpu_temperature(&self) -> Option<f32> {
+        crate::modules::gpu::gpu_temperature(&self.temperatures)
+    }
+
+    /// 所有温度传感器里的最高值：CPU 最热的那颗核心、SSD、电池……谁最热就是谁。
     pub fn max_temperature(&self) -> Option<f32> {
         self.temperatures
             .iter()
@@ -327,4 +379,9 @@ pub struct ProcessInfo {
     pub mem_bytes: u64,
     pub read_bps: u64,
     pub write_bps: u64,
+    /// 网络下行 / 上行速率（字节/秒）。只有请求了按进程统计网络流量、且系统支持时才有值，其余情况是 0。
+    #[serde(default)]
+    pub net_rx_bps: u64,
+    #[serde(default)]
+    pub net_tx_bps: u64,
 }

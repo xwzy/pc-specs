@@ -1,0 +1,135 @@
+_version: 2
+
+# ---- 应用（卸载） ----
+nav_apps:
+  en: "Apps"
+  zh-CN: "应用"
+apps_unsupported:
+  en: "Managing apps isn't supported on this system. Use your package manager."
+  zh-CN: "这个系统上不支持管理应用，请用系统的包管理器。"
+apps_refresh:
+  en: "Refresh"
+  zh-CN: "刷新"
+apps_search:
+  en: "Search apps"
+  zh-CN: "搜索应用"
+apps_summary:
+  en: "%{n} apps, %{size}"
+  zh-CN: "共 %{n} 个应用，占用 %{size}"
+apps_summary_measuring:
+  en: "%{n} apps · measuring sizes…"
+  zh-CN: "共 %{n} 个应用 · 正在计算大小…"
+apps_sort_size:
+  en: "Size"
+  zh-CN: "大小"
+apps_sort_name:
+  en: "Name"
+  zh-CN: "名称"
+apps_sort_unused:
+  en: "Unused first"
+  zh-CN: "久未使用"
+apps_empty:
+  en: "No apps found."
+  zh-CN: "没有找到应用。"
+apps_no_match:
+  en: "No app matches “%{query}”."
+  zh-CN: "没有名字含“%{query}”的应用。"
+apps_pick:
+  en: "Select an app to see what uninstalling it removes."
+  zh-CN: "选择一个应用，查看卸载它会移除什么。"
+apps_version:
+  en: "Version %{v}"
+  zh-CN: "版本 %{v}"
+apps_size:
+  en: "Size %{size}"
+  zh-CN: "占用 %{size}"
+apps_last_used:
+  en: "Last used %{date}"
+  zh-CN: "最近使用 %{date}"
+apps_never_used:
+  en: "No record of use"
+  zh-CN: "没有使用记录"
+apps_idle:
+  en: "Not opened for %{n} months"
+  zh-CN: "已 %{n} 个月没打开"
+apps_win_note:
+  en: "Windows' own uninstaller for this program will open. It removes the program and the files it set up."
+  zh-CN: "会打开这个程序自带的卸载程序，由它清理程序和它安装的文件。"
+apps_leftovers_loading:
+  en: "Looking for leftover files…"
+  zh-CN: "正在查找残留文件…"
+apps_leftovers_none:
+  en: "No leftover files found."
+  zh-CN: "没有找到残留文件。"
+apps_leftovers_title:
+  en: "Leftover files · %{n} items, %{size}"
+  zh-CN: "残留文件 · %{n} 项，%{size}"
+apps_leftovers_desc:
+  en: "Settings, caches and data the app keeps outside its own folder. Untick anything you want to keep."
+  zh-CN: "应用放在自己文件夹以外的设置、缓存和数据。不想删的取消勾选。"
+apps_select_all:
+  en: "All"
+  zh-CN: "全选"
+apps_select_none:
+  en: "None"
+  zh-CN: "全不选"
+apps_system_title:
+  en: "In system folders · %{n} items"
+  zh-CN: "在系统文件夹里 · %{n} 项"
+apps_system_desc:
+  en: "Listed for reference only. Removing them takes an administrator, so do it yourself in the file manager."
+  zh-CN: "仅供参考。删除它们需要管理员权限，请自己在文件管理器里处理。"
+apps_total:
+  en: "%{n} leftover items selected · %{size} in all"
+  zh-CN: "已选 %{n} 项残留 · 一共 %{size}"
+apps_uninstall:
+  en: "Uninstall"
+  zh-CN: "卸载"
+apps_remove_files:
+  en: "Remove files only"
+  zh-CN: "只删残留"
+apps_remove_files_ok:
+  en: "Remove"
+  zh-CN: "删除"
+apps_confirm_title:
+  en: "Uninstall “%{name}”?"
+  zh-CN: "卸载“%{name}”？"
+apps_confirm_desc:
+  en: "“%{name}” and %{n} leftover items (%{size} in all) will be moved to the %{bin}. You can put them back from there."
+  zh-CN: "“%{name}”和 %{n} 项残留文件（一共 %{size}）会被移到%{bin}，可以从那里放回来。"
+apps_confirm_desc_alone:
+  en: "“%{name}” (%{size}) will be moved to the %{bin}. You can put it back from there."
+  zh-CN: "“%{name}”（%{size}）会被移到%{bin}，可以从那里放回来。"
+apps_confirm_desc_win:
+  en: "The uninstaller of “%{name}” will open. Follow its steps, then refresh this list."
+  zh-CN: "将打开“%{name}”的卸载程序。按它的提示操作，完成后刷新这个列表。"
+apps_confirm_files_title:
+  en: "Remove the leftover files of “%{name}”?"
+  zh-CN: "删除“%{name}”的残留文件？"
+apps_confirm_files_desc:
+  en: "%{n} items (%{size}) will be moved to the %{bin}. The app itself stays."
+  zh-CN: "%{n} 项（共 %{size}）会被移到%{bin}，应用本身保留。"
+apps_done:
+  en: "Moved “%{name}” and %{n} leftover items to the %{bin} (%{size})."
+  zh-CN: "已把“%{name}”和 %{n} 项残留文件移到%{bin}（%{size}）。"
+apps_done_alone:
+  en: "Moved “%{name}” to the %{bin} (%{size})."
+  zh-CN: "已把“%{name}”移到%{bin}（%{size}）。"
+apps_done_files:
+  en: "Moved %{n} leftover items of “%{name}” to the %{bin} (%{size})."
+  zh-CN: "已把“%{name}”的 %{n} 项残留文件移到%{bin}（%{size}）。"
+apps_done_partial:
+  en: "%{failed} items couldn't be moved: %{error}"
+  zh-CN: "有 %{failed} 项没能移走：%{error}"
+apps_failed:
+  en: "Couldn't remove “%{name}”: %{error}"
+  zh-CN: "无法卸载“%{name}”：%{error}"
+apps_hint_admin:
+  en: "It may need an administrator: remove it in the file manager instead."
+  zh-CN: "可能需要管理员权限：请改在文件管理器里删除。"
+apps_running_error:
+  en: "“%{name}” is running. Quit it first, then try again."
+  zh-CN: "“%{name}”正在运行。请先退出它，再试一次。"
+apps_uninstaller_started:
+  en: "The uninstaller of “%{name}” has started. Refresh the list when it finishes."
+  zh-CN: "“%{name}”的卸载程序已启动。完成后请刷新列表。"

@@ -376,15 +376,10 @@ pub fn to_markdown(snapshot: &SystemSnapshot, include_sensitive: bool) -> String
             out.push_str(&format!("- Cycle count: {c}\n"));
         }
         if let (Some(d), Some(f)) = (b.design_capacity_mwh, b.full_capacity_mwh) {
-            let health = if d > 0 {
-                f as f64 * 100.0 / d as f64
-            } else {
-                0.0
-            };
-            out.push_str(&format!(
-                "- Capacity: {} mWh full / {} mWh design ({:.0}% health)\n",
-                f, d, health
-            ));
+            out.push_str(&format!("- Capacity: {f} mWh full / {d} mWh design\n"));
+        }
+        if let Some(health) = b.health_percent {
+            out.push_str(&format!("- Health: {health:.0}%\n"));
         }
         if let Some(t) = b.temperature_c {
             out.push_str(&format!("- Temperature: {:.1}°C\n", t));

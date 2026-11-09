@@ -1,5 +1,5 @@
 use super::CpuDetails;
-use crate::model::{MemoryModule, MotherboardInfo, SensorReading};
+use crate::model::{MemoryBreakdown, MemoryModule, MotherboardInfo, SensorReading};
 use crate::util::{clean_dmi, run_stdout_timeout};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -357,6 +357,14 @@ pub fn extra_sensors() -> Vec<SensorReading> {
     out
 }
 
+/// 内存构成与压力：`/proc/meminfo`、`/proc/vmstat`，内核开了 PSI 时再加 `/proc/pressure/memory`。
+pub fn memory_breakdown() -> Option<MemoryBreakdown> {
+    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+    let vmstat = fs::read_to_string("/proc/vmstat").unwrap_or_default();
+    let psi = fs::read_to_string("/proc/pressure/memory").ok();
+    super::proc_mem::parse(&meminfo, &vmstat, psi.as_deref())
+}
+
 pub fn desktop_env() -> Option<String> {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP")
         .ok()
@@ -375,4 +383,9 @@ pub fn desktop_env() -> Option<String> {
         (None, Some(s)) => Some(s),
         _ => None,
     }
+}
+
+/// Linux 上 sysinfo 给的 RSS 就是 top / htop 的口径，不需要另外读。
+pub fn process_memory(_pid: u32) -> Option<u64> {
+    None
 }

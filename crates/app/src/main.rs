@@ -13,10 +13,12 @@ mod instance;
 mod menubar;
 mod pages;
 mod poster;
+mod rules;
 mod settings;
 mod state;
 mod tray;
 mod ui;
+mod usage;
 mod workspace;
 
 rust_i18n::i18n!("locales", fallback = "en");

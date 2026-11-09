@@ -1,8 +1,16 @@
 # Rust
 target/
 
-# 打包产物（scripts/package.sh）
+# 打包产物（scripts/<平台>/package.*）
 dist/
+
+# 签名材料：证书、私钥、公证用的 API key 永远不进仓库，只放在 CI 的 Secrets 里
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.mobileprovision
 
 # IDE
 .idea/

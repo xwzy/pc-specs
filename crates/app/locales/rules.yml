@@ -1,0 +1,238 @@
+_version: 2
+nav_rules:
+  en: "Rules"
+  zh-CN: "规则"
+nav_group_tools:
+  en: "Tools"
+  zh-CN: "工具"
+rules_description:
+  en: "Do something when a reading crosses a line: notify you, ping a webhook or run a command."
+  zh-CN: "当某个读数越过设定的线时：发通知、推送 Webhook，或者运行一条命令。"
+rules_add:
+  en: "Add rule"
+  zh-CN: "添加规则"
+rules_restore:
+  en: "Restore defaults"
+  zh-CN: "恢复默认"
+rules_delivery:
+  en: "Delivery"
+  zh-CN: "推送"
+rules_master:
+  en: "Enable rules"
+  zh-CN: "启用规则"
+rules_master_hint:
+  en: "Turn off to pause every rule below. The rules themselves are kept."
+  zh-CN: "关闭后下面所有规则都暂停，规则本身不会丢。"
+rules_webhook:
+  en: "Webhook address"
+  zh-CN: "Webhook 地址"
+rules_webhook_hint:
+  en: "Rules with Webhook turned on POST a JSON message here. Works with Slack, Discord, Mattermost, Feishu, DingTalk, or your own server."
+  zh-CN: "打开了 Webhook 的规则触发时，会向这个地址 POST 一条 JSON 消息。可对接 Slack、Discord、Mattermost、飞书、钉钉，也可以是你自己的服务。"
+rules_webhook_test:
+  en: "Send test"
+  zh-CN: "发送测试"
+rules_format_generic:
+  en: "Generic JSON"
+  zh-CN: "通用 JSON"
+rules_format_feishu:
+  en: "Feishu"
+  zh-CN: "飞书"
+rules_format_dingtalk:
+  en: "DingTalk"
+  zh-CN: "钉钉"
+rules_list:
+  en: "Rules"
+  zh-CN: "规则"
+rules_empty_title:
+  en: "No rules yet"
+  zh-CN: "还没有规则"
+rules_empty_hint:
+  en: "Add one, for example: tell me when the disk has less than 20 GB free."
+  zh-CN: "添加一条吧，比如：磁盘剩余空间低于 20 GB 时通知我。"
+rules_events:
+  en: "Recent triggers"
+  zh-CN: "最近触发"
+rules_events_empty:
+  en: "Nothing has triggered yet."
+  zh-CN: "还没有触发过。"
+rules_events_clear:
+  en: "Clear"
+  zh-CN: "清空"
+rule_enable:
+  en: "Enable this rule"
+  zh-CN: "启用这条规则"
+rule_active:
+  en: "In effect"
+  zh-CN: "条件成立中"
+rule_edit:
+  en: "Edit"
+  zh-CN: "编辑"
+rule_close:
+  en: "Collapse"
+  zh-CN: "收起"
+rule_delete:
+  en: "Delete"
+  zh-CN: "删除"
+rule_when:
+  en: "When"
+  zh-CN: "条件"
+rule_hold:
+  en: "Lasts at least"
+  zh-CN: "至少持续"
+rule_cooldown:
+  en: "Repeat at most every"
+  zh-CN: "最多每隔"
+rule_compare_above:
+  en: "Reaches"
+  zh-CN: "达到"
+rule_compare_below:
+  en: "Falls below"
+  zh-CN: "低于"
+rule_action_notify:
+  en: "Notification"
+  zh-CN: "通知"
+rule_action_webhook:
+  en: "Webhook"
+  zh-CN: "Webhook"
+rule_action_command:
+  en: "Run command"
+  zh-CN: "运行命令"
+rule_action_none:
+  en: "Does nothing"
+  zh-CN: "不执行任何动作"
+rule_webhook_unset:
+  en: "Set an address under Delivery first"
+  zh-CN: "先在上面的「推送」里填写地址"
+rule_command_placeholder:
+  en: "Command line, e.g. osascript -e 'beep 3'"
+  zh-CN: "命令行，例如 osascript -e 'beep 3'"
+rule_command_hint:
+  en: "Runs with sh (cmd on Windows) when the rule triggers. Details are passed as environment variables: PCSPECS_RULE, PCSPECS_METRIC, PCSPECS_VALUE, PCSPECS_THRESHOLD, PCSPECS_DETAIL, PCSPECS_MESSAGE, PCSPECS_HOST."
+  zh-CN: "规则触发时用 sh（Windows 用 cmd）运行。触发的细节通过环境变量传入：PCSPECS_RULE、PCSPECS_METRIC、PCSPECS_VALUE、PCSPECS_THRESHOLD、PCSPECS_DETAIL、PCSPECS_MESSAGE、PCSPECS_HOST。"
+rule_test:
+  en: "Try it"
+  zh-CN: "试一试"
+rule_test_hint:
+  en: "Run this rule's actions now with the current reading"
+  zh-CN: "用当前读数把这条规则的动作执行一遍"
+rule_hint_process_cpu:
+  en: "100% equals one fully used core, so busy multi-threaded apps can go above 100%."
+  zh-CN: "100% 是一个核心满载，多线程的程序可以超过 100%。"
+rule_hint_memory_pressure:
+  en: "Higher means tighter. Only available where the system reports it."
+  zh-CN: "越高越紧张。只有系统提供了内存压力的平台才有读数。"
+rule_hint_fan_speed:
+  en: "Reads the fastest fan. Needs a machine that reports its fans."
+  zh-CN: "取转得最快的风扇。需要机器能读到风扇转速。"
+rule_hint_on_battery:
+  en: "Triggers when the power cable comes out. Laptops only."
+  zh-CN: "拔掉电源线的那一刻触发。仅笔记本。"
+rule_hint_net_latency:
+  en: "Round trip to public servers, measured over the physical network (VPN and proxy tunnels don't distort it). Lost replies have no latency; use \"Goes offline\" for those."
+  zh-CN: "到公网服务器的往返时间，走物理网卡直接量（不受 VPN、代理隧道影响）。没有回应就没有延迟，那种情况请用「网络断开」。"
+rule_hint_offline:
+  en: "Triggers when no public server answers any more. Set \"for\" to ride out short drops. Webhooks can't go out while offline; use a notification or a command."
+  zh-CN: "所有公网服务器都不再回应时触发。把「持续」设长一点可以忽略瞬间的掉线。断网时 Webhook 发不出去，请用通知或命令。"
+rule_summary_above:
+  en: "%{metric} reaches %{limit}"
+  zh-CN: "%{metric}达到 %{limit}"
+rule_summary_below:
+  en: "%{metric} falls below %{limit}"
+  zh-CN: "%{metric}低于 %{limit}"
+rule_summary_for:
+  en: "%{when} for %{duration}"
+  zh-CN: "%{when}，持续 %{duration}"
+rule_immediately:
+  en: "Immediately"
+  zh-CN: "立即"
+rule_secs:
+  en: "%{n} s"
+  zh-CN: "%{n} 秒"
+rule_mins:
+  en: "%{n} min"
+  zh-CN: "%{n} 分钟"
+rule_hours:
+  en: "%{n} h"
+  zh-CN: "%{n} 小时"
+rule_message:
+  en: "%{metric} is %{value}"
+  zh-CN: "%{metric}为 %{value}"
+rule_message_detail:
+  en: "%{metric} is %{value} (%{detail})"
+  zh-CN: "%{metric}为 %{value}（%{detail}）"
+rule_message_on_battery:
+  en: "Now running on battery power"
+  zh-CN: "已改用电池供电"
+rule_message_offline:
+  en: "The internet is unreachable"
+  zh-CN: "网络已断开，连不上互联网"
+rule_webhook_ok:
+  en: "Test message sent"
+  zh-CN: "测试消息已发送"
+rule_webhook_failed:
+  en: "Webhook failed: %{error}"
+  zh-CN: "Webhook 推送失败：%{error}"
+rule_webhook_empty:
+  en: "Enter a webhook address first"
+  zh-CN: "请先填写 Webhook 地址"
+rule_webhook_test_message:
+  en: "This is a test message from PC Specs"
+  zh-CN: "这是一条来自 PC Specs 的测试消息"
+rule_command_ok:
+  en: "Command finished"
+  zh-CN: "命令已执行"
+rule_command_failed:
+  en: "Command failed: %{detail}"
+  zh-CN: "命令执行失败：%{detail}"
+rule_command_timeout:
+  en: "Command did not start or took longer than 60 s"
+  zh-CN: "命令没能启动，或者超过 60 秒还没结束"
+rule_metric_cpu_usage:
+  en: "CPU usage"
+  zh-CN: "CPU 占用"
+rule_metric_memory_usage:
+  en: "Memory usage"
+  zh-CN: "内存占用"
+rule_metric_memory_pressure:
+  en: "Memory pressure"
+  zh-CN: "内存压力"
+rule_metric_swap_usage:
+  en: "Swap usage"
+  zh-CN: "交换空间占用"
+rule_metric_disk_usage:
+  en: "Disk usage"
+  zh-CN: "磁盘占用"
+rule_metric_disk_free:
+  en: "Free disk space"
+  zh-CN: "磁盘剩余空间"
+rule_metric_temperature:
+  en: "Temperature"
+  zh-CN: "温度"
+rule_metric_fan_speed:
+  en: "Fan speed"
+  zh-CN: "风扇转速"
+rule_metric_gpu_usage:
+  en: "GPU usage"
+  zh-CN: "GPU 占用"
+rule_metric_battery_level:
+  en: "Battery level"
+  zh-CN: "电池电量"
+rule_metric_on_battery:
+  en: "Switches to battery power"
+  zh-CN: "改用电池供电"
+rule_metric_net_download:
+  en: "Download speed"
+  zh-CN: "下载速度"
+rule_metric_net_upload:
+  en: "Upload speed"
+  zh-CN: "上传速度"
+rule_metric_net_latency:
+  en: "Internet latency"
+  zh-CN: "网络延迟"
+rule_metric_offline:
+  en: "Goes offline"
+  zh-CN: "网络断开"
+rule_metric_process_cpu:
+  en: "Busiest process CPU"
+  zh-CN: "最忙进程的 CPU 占用"

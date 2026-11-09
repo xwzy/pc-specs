@@ -1,7 +1,7 @@
 //! 展示用格式化：容量 / 速率 / 温度 / 时长 / 频率，全部受用户设置的单位影响。
 
 use crate::settings::{NetUnit, Settings, SizeUnit, TempUnit};
-use pc_specs_core::model::CpuInfo;
+use pc_specs_core::model::{CpuInfo, OsInfo, SensorReading};
 use rust_i18n::t;
 
 /// 数值位数随大小自适应：>=100 不带小数，>=10 一位，其余两位。
@@ -196,6 +196,15 @@ pub fn percent(value: f32) -> String {
     format!("{value:.0}%")
 }
 
+/// 往返延迟：个位数毫秒留一位小数（`3.2 ms`），再大就不必了（`18 ms`）。
+pub fn latency(ms: f32) -> String {
+    if ms < 10.0 {
+        format!("{ms:.1} ms")
+    } else {
+        format!("{ms:.0} ms")
+    }
+}
+
 /// 占比（0..=100）。total 为 0 时返回 0。
 pub fn ratio(used: u64, total: u64) -> f32 {
     if total == 0 {
@@ -216,20 +225,68 @@ pub fn freq(hz: u64) -> String {
     }
 }
 
+/// 时长，跟随界面语言：`3d 9h 20m` / `3 天 9 小时 20 分`。
 pub fn duration(secs: u64) -> String {
     let d = secs / 86_400;
     let h = (secs % 86_400) / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;
-    if d > 0 {
-        format!("{d}d {h}h {m}m")
+    let text = if d > 0 {
+        t!("dur_dhm", d = d, h = h, m = m)
     } else if h > 0 {
-        format!("{h}h {m}m")
+        t!("dur_hm", h = h, m = m)
     } else if m > 0 {
-        format!("{m}m {s}s")
+        t!("dur_ms", m = m, s = s)
     } else {
-        format!("{s}s")
+        t!("dur_s", s = s)
+    };
+    text.into_owned()
+}
+
+/// 存储介质的显示名。没识别出来的类型返回 `None`，界面上干脆不显示，免得冒出一句英文的 Unknown。
+pub fn storage_kind(kind: &str) -> Option<String> {
+    match kind {
+        "" | "Unknown" => None,
+        "Removable" => Some(t!("storage_kind_removable").into_owned()),
+        other => Some(other.to_string()),
     }
+}
+
+/// 系统名称 + 版本。有的平台名称里已经带了版本号（`macOS 26.2 Tahoe`），不要再接一遍。
+pub fn os_title(os: &OsInfo) -> String {
+    let (name, version) = (os.name.trim(), os.version.trim());
+    if version.is_empty() || name.contains(version) {
+        name.to_string()
+    } else {
+        format!("{name} {version}")
+    }
+}
+
+/// 电池状态的显示名；不认识的状态原样显示。
+pub fn battery_state(raw: &str) -> String {
+    match raw.to_ascii_lowercase().as_str() {
+        "charging" => t!("bat_state_charging"),
+        "discharging" => t!("bat_state_discharging"),
+        "full" => t!("bat_state_full"),
+        "empty" => t!("bat_state_empty"),
+        "unknown" => t!("bat_state_unknown"),
+        _ => return raw.to_string(),
+    }
+    .into_owned()
+}
+
+/// 网卡类型的显示名；不认识的类型原样显示。
+pub fn net_kind(kind: &str) -> String {
+    match kind {
+        "wifi" => t!("net_kind_wifi"),
+        "ethernet" => t!("net_kind_ethernet"),
+        "bluetooth" => t!("net_kind_bluetooth"),
+        "virtual" => t!("net_kind_virtual"),
+        "loopback" => t!("net_kind_loopback"),
+        "other" => t!("net_kind_other"),
+        other => return other.to_string(),
+    }
+    .into_owned()
 }
 
 /// Unix 秒 → 本地时间 `YYYY-MM-DD HH:MM`。
@@ -288,6 +345,56 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+/// 热压力等级（0 正常、1 中等、2 较重、3 严重、4 休眠）的显示名。
+pub fn thermal_pressure(level: u8) -> String {
+    match level {
+        0 => t!("thermal_nominal"),
+        1 => t!("thermal_moderate"),
+        2 => t!("thermal_heavy"),
+        _ => t!("thermal_critical"),
+    }
+    .into_owned()
+}
+
+/// macOS SMC 里带序号的传感器名（风扇、CPU / GPU 逐核温度）对应的翻译键和序号。
+fn smc_numbered_label(label: &str) -> Option<(&'static str, u32)> {
+    [
+        ("Fan ", "sensor_fan_n"),
+        ("CPU efficiency core ", "sensor_cpu_efficiency_core"),
+        ("CPU performance core ", "sensor_cpu_performance_core"),
+        ("CPU super core ", "sensor_cpu_super_core"),
+        ("GPU ", "sensor_gpu_n"),
+    ]
+    .into_iter()
+    .find_map(|(prefix, key)| Some((key, label.strip_prefix(prefix)?.parse().ok()?)))
+}
+
+/// 传感器的显示名：macOS SMC 那几个固定的名字翻译成界面语言，硬件自己报的名字原样显示。
+pub fn sensor_label(r: &SensorReading) -> String {
+    if r.source != "smc" {
+        return r.label.clone();
+    }
+    match r.label.as_str() {
+        "System Total" => t!("sensor_system_total").into_owned(),
+        "DC In" => t!("sensor_dc_in").into_owned(),
+        "Battery" => t!("sensor_battery").into_owned(),
+        other => match smc_numbered_label(other) {
+            Some((key, n)) => t!(key, n = n).into_owned(),
+            None => other.to_string(),
+        },
+    }
+}
+
+/// 风扇 / 功率 / 电压 / 电流这类读数带单位的显示（温度要照用户设置换算，不走这里）。
+pub fn sensor_value(r: &SensorReading) -> String {
+    match r.unit.as_str() {
+        "RPM" => format!("{:.0} RPM", r.value),
+        "V" => format!("{:.2} V", r.value),
+        "A" => format!("{:.2} A", r.value),
+        unit => format!("{:.1} {unit}", r.value),
+    }
+}
+
 /// 空字符串显示为 "—"。
 pub fn or_dash(s: &str) -> String {
     if s.trim().is_empty() {
@@ -314,6 +421,48 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smc_sensor_names_with_a_number_are_translated() {
+        assert_eq!(smc_numbered_label("Fan 2"), Some(("sensor_fan_n", 2)));
+        assert_eq!(
+            smc_numbered_label("CPU performance core 12"),
+            Some(("sensor_cpu_performance_core", 12))
+        );
+        assert_eq!(
+            smc_numbered_label("CPU efficiency core 1"),
+            Some(("sensor_cpu_efficiency_core", 1))
+        );
+        assert_eq!(
+            smc_numbered_label("CPU super core 4"),
+            Some(("sensor_cpu_super_core", 4))
+        );
+        assert_eq!(smc_numbered_label("GPU 3"), Some(("sensor_gpu_n", 3)));
+        // 没有序号或者序号不是数字的，原样显示。
+        assert_eq!(smc_numbered_label("GPU MTR Temp Sensor0"), None);
+        assert_eq!(smc_numbered_label("Fan"), None);
+        assert_eq!(smc_numbered_label("CPU performance core x"), None);
+        assert_eq!(smc_numbered_label("PMU tdie0"), None);
+    }
+
+    #[test]
+    fn every_numbered_sensor_name_has_both_translations() {
+        for (key, n) in [
+            ("sensor_fan_n", 1),
+            ("sensor_cpu_efficiency_core", 1),
+            ("sensor_cpu_performance_core", 1),
+            ("sensor_cpu_super_core", 1),
+            ("sensor_gpu_n", 1),
+        ] {
+            for locale in ["en", "zh-CN"] {
+                let text = t!(key, locale = locale, n = n);
+                assert!(
+                    text.contains('1') && !text.contains("sensor_"),
+                    "{key} is not translated for {locale}: {text}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn rate_scale_follows_the_peak() {

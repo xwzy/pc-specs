@@ -207,6 +207,19 @@ fn degrees(celsius: f32, settings: &Settings) -> Value {
     )
 }
 
+/// 转得最快的那把风扇（rpm）。
+fn fastest_fan(tick: &MonitorTick) -> Option<f64> {
+    tick.other_sensors
+        .iter()
+        .filter(|r| r.kind == "fan" && r.value.is_finite())
+        .map(|r| f64::from(r.value))
+        .max_by(f64::total_cmp)
+}
+
+fn fan_speed(rpm: f64) -> Value {
+    Value::new(format!("{rpm:.0}"), "rpm", "")
+}
+
 fn rate(lead: &'static str, bytes_per_sec: u64, settings: &Settings) -> Value {
     let text = fmt::rate_compact(bytes_per_sec, settings.net_unit);
     let split = text
@@ -340,8 +353,15 @@ pub fn reading(
                 _ => t.cpu_temperature().or_else(|| t.max_temperature()),
             });
             let number = celsius.and_then(|c| finite(c as f64));
+            // 走势和仪表始终是温度；只有菜单栏上那段文字可以换成风扇转速。
+            let value = if show == Show::Fan {
+                tick.and_then(fastest_fan)
+                    .map_or_else(|| Value::missing(""), fan_speed)
+            } else {
+                number.map_or_else(|| Value::missing(""), |c| degrees(c as f32, settings))
+            };
             Reading {
-                value: number.map_or_else(|| Value::missing(""), |c| degrees(c as f32, settings)),
+                value,
                 second: None,
                 number,
                 scale: Scale::Celsius,
@@ -407,6 +427,7 @@ pub fn widest(metric: Metric, show: Show, settings: &Settings) -> Vec<(Value, Op
         (Metric::Network, Show::Down) => rates(["↓", "↓"], false),
         (Metric::Network, Show::Up) => rates(["↑", "↑"], false),
         (Metric::Network, _) | (Metric::Storage, Show::Io) => rates(["↓", "↑"], true),
+        (Metric::Temperature, Show::Fan) => vec![(fan_speed(8888.), None)],
         (Metric::Temperature, _) => vec![
             (degrees(88., settings), None),
             (degrees(100., settings), None),
@@ -436,6 +457,20 @@ pub enum ProcessSort {
     Cpu,
     Memory,
     Io,
+    /// 网络流量：下行加上行，只列出此刻有流量的进程。
+    Net,
+}
+
+impl ProcessSort {
+    /// 一行里有两个数（读 / 写、下行 / 上行）的排行。
+    pub fn is_pair(self) -> bool {
+        matches!(self, Self::Io | Self::Net)
+    }
+}
+
+/// 进程此刻的网络流量（下行加上行）。
+pub fn net_traffic(p: &ProcessInfo) -> u64 {
+    p.net_rx_bps.saturating_add(p.net_tx_bps)
 }
 
 pub fn ranked_processes(
@@ -444,7 +479,11 @@ pub fn ranked_processes(
     descending: bool,
     limit: usize,
 ) -> Vec<&ProcessInfo> {
-    let mut rows: Vec<_> = processes.iter().collect();
+    let mut rows: Vec<_> = processes
+        .iter()
+        // 流量排行只看正在收发数据的进程，一长串零没有意义。
+        .filter(|p| sort != ProcessSort::Net || net_traffic(p) > 0)
+        .collect();
     rows.sort_unstable_by(|a, b| {
         let order = match sort {
             ProcessSort::Cpu => a.cpu_percent.total_cmp(&b.cpu_percent),
@@ -453,6 +492,7 @@ pub fn ranked_processes(
                 .read_bps
                 .saturating_add(a.write_bps)
                 .cmp(&b.read_bps.saturating_add(b.write_bps)),
+            ProcessSort::Net => net_traffic(a).cmp(&net_traffic(b)),
         };
         (if descending { order.reverse() } else { order }).then_with(|| a.pid.cmp(&b.pid))
     });
@@ -500,6 +540,33 @@ mod tests {
         assert_eq!(pids(ProcessSort::Cpu, true, 3), [2, 1, 3]);
         assert_eq!(pids(ProcessSort::Io, true, 3), [2, 3, 1]);
         assert_eq!(pids(ProcessSort::Memory, false, 3), [3, 1, 2]);
+    }
+
+    #[test]
+    fn network_panel_ranks_active_processes_by_total_traffic() {
+        let process = |pid, rx, tx| ProcessInfo {
+            pid,
+            net_rx_bps: rx,
+            net_tx_bps: tx,
+            ..Default::default()
+        };
+        // 3 号下载最多但总量不是最大：排序看的是上下行之和；5 号没有流量，不进榜；2 号和 6 号一样大，按 pid。
+        let rows = vec![
+            process(3, 900, 0),
+            process(1, 100, 1000),
+            process(6, 1000, 0),
+            process(2, 500, 500),
+            process(5, 0, 0),
+            process(4, 0, 50),
+        ];
+        let pids = |limit| {
+            ranked_processes(&rows, ProcessSort::Net, true, limit)
+                .iter()
+                .map(|p| p.pid)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pids(10), [1, 2, 6, 3, 4]);
+        assert_eq!(pids(2), [1, 2]);
     }
 
     #[test]

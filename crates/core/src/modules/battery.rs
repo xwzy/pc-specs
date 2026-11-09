@@ -49,10 +49,25 @@ pub fn collect() -> Option<BatteryInfo> {
             .map(|t| t.get::<second>().round() as u64),
         time_to_full_secs: bat.time_to_full().map(|t| t.get::<second>().round() as u64),
         power_now_mw,
+        health_percent: None,
     };
     #[cfg(target_os = "macos")]
     apply_ioreg(&mut info);
+    info.health_percent = capacity_ratio(&info);
+    // Apple 的「最大容量」是校准过的，和「系统设置」里的数字一致，比自己拿原始容量相除准。
+    #[cfg(target_os = "macos")]
+    if let Some(reported) = crate::platform::macos::battery_health_percent() {
+        info.health_percent = Some(reported);
+    }
     Some(info)
+}
+
+/// 满电容量占设计容量的百分比。
+fn capacity_ratio(info: &BatteryInfo) -> Option<f32> {
+    match (info.full_capacity_mwh, info.design_capacity_mwh) {
+        (Some(full), Some(design)) if design > 0 => Some(full as f32 / design as f32 * 100.0),
+        _ => None,
+    }
 }
 
 /// `battery` 库在 macOS 上把 `MaxCapacity`（Apple Silicon 上是百分比 0–100）当 mAh 用，
@@ -99,5 +114,35 @@ fn apply_ioreg(info: &mut BatteryInfo) {
     if let Some(ma) = num("InstantAmperage") {
         let mw = (ma as f64 * volts).round() as i64;
         info.power_now_mw = (mw != 0).then_some(mw);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_is_the_full_capacity_over_the_design_capacity() {
+        let info = BatteryInfo {
+            design_capacity_mwh: Some(50_000),
+            full_capacity_mwh: Some(45_000),
+            ..Default::default()
+        };
+        assert_eq!(capacity_ratio(&info), Some(90.0));
+    }
+
+    #[test]
+    fn health_needs_both_capacities_and_a_real_design_capacity() {
+        let only_full = BatteryInfo {
+            full_capacity_mwh: Some(45_000),
+            ..Default::default()
+        };
+        assert_eq!(capacity_ratio(&only_full), None);
+        let zero_design = BatteryInfo {
+            design_capacity_mwh: Some(0),
+            full_capacity_mwh: Some(45_000),
+            ..Default::default()
+        };
+        assert_eq!(capacity_ratio(&zero_design), None);
     }
 }
