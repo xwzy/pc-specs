@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 隐私清单：scripts/macos/appstore.sh 把它放进 PC Specs.app/Contents/Resources/。
+     应用不收集任何数据、不追踪用户、不联网；下面只声明用到了哪几类「需要申报理由」的系统 API。 -->
+<plist version="1.0">
+<dict>
+  <key>NSPrivacyTracking</key><false/>
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array/>
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+    <!-- 文件时间戳：存储分析读用户选的文件夹里文件的大小、修改时间；读写应用自己容器里的设置与历史记录；
+         结果列表里把修改时间显示给用户。 -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>3B52.1</string>
+        <string>C617.1</string>
+        <string>DDA9.1</string>
+      </array>
+    </dict>
+    <!-- 开机时间：用来显示「已运行多久」，只在界面里显示。 -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>35F9.1</string>
+      </array>
+    </dict>
+    <!-- 磁盘空间：存储概览显示每个磁盘的容量和剩余；速度测试前确认剩余空间够放测试文件。 -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>85F4.1</string>
+        <string>E174.1</string>
+      </array>
+    </dict>
+    <!-- UserDefaults：只读写应用自己的偏好。 -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>CA92.1</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

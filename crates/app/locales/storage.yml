@@ -370,6 +370,9 @@ sa_speed_buffered:
 sa_speed_note:
   en: "A short burst shows a disk's peak. An SSD slows down once its fast cache is full, so choose a larger test size to see that."
   zh-CN: "短时间的测试量到的是磁盘的峰值。固态硬盘的高速缓存写满之后会变慢，选更大的测试大小就能看到。"
+sa_speed_sandbox:
+  en: "Because of the macOS sandbox, only the startup disk can be tested here."
+  zh-CN: "受 macOS 沙盒限制，这里只能测试启动磁盘。"
 sa_speed_no_space:
   en: "Not enough free space for the test file: it needs about 100 MiB free."
   zh-CN: "剩余空间不够放测试文件：至少需要约 100 MiB 空闲。"

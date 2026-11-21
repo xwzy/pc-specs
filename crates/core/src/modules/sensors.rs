@@ -1,8 +1,11 @@
 use crate::model::SensorReading;
+#[cfg(not(feature = "appstore"))]
 use std::collections::HashSet;
+#[cfg(not(feature = "appstore"))]
 use sysinfo::Components;
 
 /// 全部传感器：sysinfo 的温度 + 各平台独有的风扇 / 电压 / 功率 / 热区。
+#[cfg(not(feature = "appstore"))]
 pub fn collect() -> Vec<SensorReading> {
     let mut out = match Components::new_with_refreshed_list() {
         Ok(c) => temperatures(&c),
@@ -14,6 +17,12 @@ pub fn collect() -> Vec<SensorReading> {
     let mut seen: HashSet<(String, String)> = HashSet::new();
     out.retain(|s| seen.insert((s.kind.clone(), s.label.to_lowercase())));
     out
+}
+
+/// 商店版没有传感器：温度、风扇、功耗要读私有的 HID / SMC 接口，沙盒也不让碰。
+#[cfg(feature = "appstore")]
+pub fn collect() -> Vec<SensorReading> {
+    Vec::new()
 }
 
 /// Apple 芯片的 CPU 逐核温度传感器：SMC 键表读出来的（`CPU performance core 3`），
@@ -38,6 +47,7 @@ pub(crate) fn is_apple_support_chip(label: &str) -> bool {
 }
 
 /// 从已刷新的 `Components` 取温度。监控线程复用同一个 `Components`，避免每次重新枚举。
+#[cfg(not(feature = "appstore"))]
 pub(crate) fn temperatures(components: &Components) -> Vec<SensorReading> {
     components
         .iter()

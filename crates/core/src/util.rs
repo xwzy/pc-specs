@@ -280,6 +280,7 @@ pub fn run_stdout_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Option
 
 /// 向 `url` POST 一段 JSON（Webhook）。只认 http / https，十秒内没有结果就放弃；
 /// 服务端回了 4xx / 5xx 同样算失败。
+#[cfg(not(feature = "appstore"))]
 pub fn post_json(url: &str, body: &str) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("the address must start with http:// or https://".into());
@@ -294,6 +295,12 @@ pub fn post_json(url: &str, body: &str) -> Result<(), String> {
         .send(body)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// 商店版不联网（没有网络权限，也不带 TLS 库），界面不提供 Webhook；留个同样签名的空壳免得上层写条件编译。
+#[cfg(feature = "appstore")]
+pub fn post_json(_url: &str, _body: &str) -> Result<(), String> {
+    Err("networking is not part of the App Store edition".into())
 }
 
 /// 在 `path_env`（缺省为进程 PATH）里查找可执行文件。

@@ -1,0 +1,109 @@
+商店版专用：去掉 gpui-pre-macos 0.3.11 里对 AppKit / Core Animation 私有 API 的使用。
+
+Mac App Store 的审核（准则 2.5.1）只允许公开 API，上传时的静态扫描会找出二进制里的私有方法名（ITMS-90338）。
+GPUI 的 macOS 平台层有五处用到了私有的东西，这个补丁把它们都去掉：
+
+  1. `_opaqueRectForWindowMoveWhenInTitlebar`  标题栏拖动的区域声明
+  2. `_windowRestorationOptions`               窗口重启后回到原来的桌面（Space）
+  3. `_zoomFill:`                              窗口菜单里的「填充」
+  4. `_windowResizeNorthWestSouthEastCursor` 等  窗口边缘的斜向缩放光标（macOS 上本应用用不到）
+  5. 私有的图层类名 `CAChameleonLayer`        毛玻璃背景的去色处理（本应用不用毛玻璃）
+
+代价：窗口重启后不一定回到原来的桌面；「填充」退化成普通的缩放。
+只在编译商店版时，由 scripts/macos/build.sh 把它应用到 cargo 注册表里那份源码的副本上，
+不改注册表里的原件，也不影响全功能版。GPUI 升级后补丁对不上，编译会直接报错，按新版本重新生成即可。
+
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -258,11 +258,6 @@
+             decl.add_method(
+                 sel!(acceptsFirstMouse:),
+                 accepts_first_mouse as extern "C" fn(_, Sel, *mut AnyObject) -> Bool,
+-            );
+-
+-            decl.add_method(
+-                sel!(_opaqueRectForWindowMoveWhenInTitlebar),
+-                opaque_rect_for_window_move_when_in_titlebar as extern "C" fn(_, Sel) -> NSRect,
+             );
+ 
+             decl.add_method(
+@@ -294,14 +289,9 @@
+             decl.register()
+         };
+         WINDOW_STATE_UNARCHIVER_CLASS = {
+-            let mut decl =
++            let decl =
+                 ClassBuilder::new(c"GPUIWindowStateKeyedUnarchiver", class!(NSKeyedUnarchiver))
+                     .unwrap();
+-            decl.add_method(
+-                sel!(_windowRestorationOptions),
+-                window_state_unarchiver_restoration_options
+-                    as extern "C" fn(_, Sel) -> *mut AnyObject,
+-            );
+             decl.register()
+         };
+     }
+@@ -337,6 +327,7 @@
+ // Returning a default-initialized `NSWindowRestorationOptions` tells AppKit to restore the
+ // window to its original Space. This is the macOS 15+ path (FB15644170: the
+ // `NSWindowRestoresWorkspaceAtLaunch` user default no longer works there).
++#[allow(dead_code)]
+ extern "C" fn window_state_unarchiver_restoration_options(
+     _this: &AnyObject,
+     _sel: Sel,
+@@ -2233,15 +2224,7 @@
+                             }
+                             "Fill" => {
+                                 if is_resizable {
+-                                    // Unlike `zoom:`, AppKit's private Fill action honors the system's
+-                                    // "Tiled windows have margins" setting.
+-                                    let responds_to_zoom_fill: Bool =
+-                                        msg_send![window, respondsToSelector: sel!(_zoomFill:)];
+-                                    if responds_to_zoom_fill == Bool::YES {
+-                                        let _: () = msg_send![window, _zoomFill: ptr::null_mut::<AnyObject>()];
+-                                    } else {
+-                                        let _: () = msg_send![window, zoom: ptr::null_mut::<AnyObject>()];
+-                                    }
++                                    let _: () = msg_send![window, zoom: ptr::null_mut::<AnyObject>()];
+                                 }
+                             }
+                             _ => {
+@@ -2591,13 +2574,9 @@
+             CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
+             CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
+ 
+-            // Undocumented, private class methods:
+-            // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
+-            CursorStyle::ResizeUpLeftDownRight => {
+-                msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+-            }
+-            CursorStyle::ResizeUpRightDownLeft => {
+-                msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
++            // AppKit has no public diagonal resize cursor.
++            CursorStyle::ResizeUpLeftDownRight | CursorStyle::ResizeUpRightDownLeft => {
++                msg_send![class!(NSCursor), crosshairCursor]
+             }
+ 
+             CursorStyle::IBeamCursorForVerticalLayout => {
+@@ -3665,6 +3644,7 @@
+ // Otherwise we return an empty rect so AppKit's native titlebar dragging keeps working.
+ // This is independent of `NSWindow.isMovable`, so the Window-menu tiling items stay
+ // enabled regardless.
++#[allow(dead_code)]
+ extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &AnyObject, _: Sel) -> NSRect {
+     let zero_rect = NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
+     let window_state = unsafe { get_window_state(this) };
+@@ -3966,13 +3946,6 @@
+     unsafe {
+         let _: () = msg_send![layer, setBackgroundColor: None::<&CGColor>];
+ 
+-        let class_name: *mut AnyObject = msg_send![layer, className];
+-        if msg_send![class_name, isEqualToString: ns_string("CAChameleonLayer")] {
+-            // Remove the desktop tinting effect.
+-            let _: () = msg_send![layer, setHidden: Bool::YES];
+-            return;
+-        }
+-
+         let filters: *mut AnyObject = msg_send![layer, filters];
+         if !filters.is_null() {
+             // Remove the increased saturation.

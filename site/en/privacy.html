@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC Specs Privacy Policy</title>
+<meta name="description" content="PC Specs reads and shows your computer's information on your machine. It collects and uploads no personal data, and the Mac App Store edition is fully offline.">
+<link rel="icon" href="../assets/icon.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="alternate" hreflang="zh-Hans" href="https://pc-specs.xwzy.dev/privacy.html">
+<link rel="alternate" hreflang="en" href="https://pc-specs.xwzy.dev/en/privacy.html">
+<link rel="alternate" hreflang="x-default" href="https://pc-specs.xwzy.dev/privacy.html">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="./"><img src="../assets/icon.png" alt="">PC Specs</a>
+  <nav><a href="./">Home</a><a href="support.html">Support</a><a class="active" href="privacy.html">Privacy Policy</a><details class="language-switcher"><summary>English</summary><div class="language-menu">
+    <a href="https://pc-specs.xwzy.dev/privacy.html">简体中文</a>
+    <a href="https://pc-specs.xwzy.dev/en/privacy.html" aria-current="true">English</a>
+  </div></details></nav>
+</div></header>
+
+<main><div class="wrap">
+<h1>PC Specs Privacy Policy</h1>
+<p class="meta">Last updated: 2026-11-17 · Applies to the Mac App Store edition of PC Specs and to the full edition downloaded from GitHub (Windows, macOS, Linux)</p>
+<div class="promise"><strong>What is on your computer stays on your computer.</strong> PC Specs reads and shows your hardware and runtime information locally. It has no account system, analytics SDK or ads, and it never sends your data anywhere on its own. The Mac App Store edition has no network access and is fully offline. The full edition uses the network only in the cases listed in section 5: outgoing requests happen only when you turned the feature on or are looking at the page that uses it, and the local API is reachable from this computer only by default.</div>
+
+<h2>1. What do we collect?</h2>
+<p><strong>Nothing.</strong></p>
+<ul>
+  <li>No telemetry, no usage tracking, no automatic crash uploads</li>
+  <li>No third-party analytics or advertising SDKs</li>
+  <li>No accounts, no sign-in, no device identifiers</li>
+  <li>The Mac App Store edition runs in the macOS sandbox with no network entitlement and contains no networking code</li>
+</ul>
+
+<h2>2. What information does the app read?</h2>
+<p>It reads information about this computer, and only shows, stores and exports it locally:</p>
+<table>
+<tr><th>What</th><th>Details</th></tr>
+<tr><td>Hardware and system information</td><td>Processor, GPU, memory, storage, motherboard, display, battery, peripherals, OS version, hostname, uptime and so on, for the pages that show them. Exports redact MAC addresses, serial numbers and the hostname by default; you can change that in Settings</td></tr>
+<tr><td>Live readings</td><td>CPU, memory, disk I/O, network speed, GPU usage and similar, for the charts, the menu bar monitor, the monitoring wall and rules</td></tr>
+<tr><td>Network information</td><td>Interfaces, IP addresses, gateway, DNS, and Wi-Fi details such as signal, channel and link speed, for the Network page and menu bar panel</td></tr>
+<tr><td>Full edition only: processes, sensors, apps, startup items, dev environment</td><td>Running processes (name and usage), temperature / fan / voltage / power readings, installed apps and startup items, versions of developer tools. Also only shown locally</td></tr>
+</table>
+
+<h2>3. Which files and folders does the app access?</h2>
+<p>Only the places you hand to it, or items you explicitly select and confirm:</p>
+<table>
+<tr><th>Situation</th><th>What is accessed</th></tr>
+<tr><td>Storage analysis</td><td>The disk or folder you choose. A scan reads file names, sizes, modification dates and types. Finding duplicates reads file contents for comparison and keeps nothing afterwards. The Mac App Store edition can only access locations you pick in the open dialog, and remembers them as macOS security-scoped bookmarks purely so you do not have to pick them again</td></tr>
+<tr><td>Collector and cleaning</td><td>Items are moved to the Trash or Recycle Bin (where you can restore them) only after you add them to the collector and confirm. In the full edition, cache cleaning and app uninstalling also list everything first and wait for your confirmation</td></tr>
+<tr><td>Disk speed test</td><td>When you start it, a temporary file is written at the test location and deleted right after. The Mac App Store edition only tests the system disk that holds its container</td></tr>
+<tr><td>Export</td><td>The location you choose in the save dialog, where a Markdown, JSON, PNG or CSV file is written</td></tr>
+</table>
+<p>The app does not scan your disk in the background and does not read files you did not choose. The Mac App Store edition requests no privacy permissions such as Contacts, Location, Photos, Microphone or Camera; before the first notification, macOS asks whether you allow notifications. On macOS the full edition triggers system prompts when it reads the Documents, Desktop or Downloads folders, and when it manages startup items through System Events. Whether to allow them is up to you.</p>
+
+<h2>4. What is stored on your device</h2>
+<table>
+<tr><th>What</th><th>File</th></tr>
+<tr><td>Settings: appearance, menu bar items, rules, recently used locations on the Storage page (plus their security-scoped bookmarks in the Mac App Store edition); in the full edition also the webhook address and the local API switches</td><td><code>settings.json</code></td></tr>
+<tr><td>Trend history: the 7-day and 30-day trends in the menu bar panels, keeping only an average and a peak per slot, usually under 100 KB compressed</td><td><code>history/</code></td></tr>
+<tr><td>Traffic totals: bytes uploaded and downloaded per day, for “today, 7 days, this month”</td><td><code>usage.json</code></td></tr>
+<tr><td>Rule trigger log</td><td><code>rule_events.json</code></td></tr>
+<tr><td>Storage scan summary: for each scanned location, the paths and sizes of the larger folders from the latest scan, used for “what grew since last time”</td><td><code>space/</code></td></tr>
+<tr><td>Disk speed test results</td><td><code>speed/</code></td></tr>
+<tr><td>Crash log: when the program hits an internal error, one line is appended locally (version, thread, location, message). It is never uploaded, and it is cleared and restarted when it gets too large</td><td><code>crash.log</code></td></tr>
+<tr><td>Single-instance lock that prevents two windows from opening (the full edition also has <code>instance.port</code>, holding a local loopback port used to wake the instance that is already running)</td><td><code>instance.lock</code></td></tr>
+</table>
+<p>These files live in the app's own <code>pc-specs</code> folder and are all small. On macOS: <code>~/Library/Application Support/pc-specs</code> (Mac App Store edition: <code>~/Library/Containers/com.xwzy.pc-specs/Data/Library/Application Support/pc-specs</code>). On Windows: <code>%APPDATA%\pc-specs</code> and <code>%LOCALAPPDATA%\pc-specs</code>. On Linux: <code>~/.config/pc-specs</code> and <code>~/.local/share/pc-specs</code>. To remove everything, uninstall the app and delete these folders (Mac App Store edition: delete <code>~/Library/Containers/com.xwzy.pc-specs</code>).</p>
+
+<h2>5. Network use (full edition only)</h2>
+<p>The Mac App Store edition does none of what this section describes. The full edition does not check for updates and never downloads anything on its own. It uses the network only in these cases:</p>
+<table>
+<tr><th>Feature</th><th>When</th><th>What is sent, and to whom</th></tr>
+<tr><td>Public IP lookup</td><td>Off by default; only when you click “Fetch now”</td><td>HTTPS requests to api.ipify.org, ifconfig.co and icanhazip.com in turn; the first valid answer is used. Those services see your IP address; the request carries nothing else about you</td></tr>
+<tr><td>Network latency check</td><td>Only while the Network page or the menu bar network panel is open, or when you have configured latency rules</td><td>TCP connections to your router, your system DNS server and four public DNS addresses (223.5.5.5, 119.29.29.29, 1.1.1.1, 8.8.8.8) to measure round-trip time. No content is sent; each connection is closed as soon as it is established</td></tr>
+<tr><td>Webhooks</td><td>Only when you have entered an address and turned on Webhook in a rule, at the moment the rule fires</td><td>A JSON POST to the address you entered: the rule, the reading, the threshold, rule-related detail (for example the busiest process name), this machine's hostname and the time</td></tr>
+<tr><td>Local HTTP data API</td><td>On by default, listening only on this machine's <code>127.0.0.1:16089</code> so other devices cannot reach it</td><td>For your own scripts and dashboards. You can turn it off in Settings, or choose “Allow LAN access”, in which case any device on the same network can read this computer's hardware information and live metrics, and the per-section endpoints also return the hostname, MAC addresses and serial numbers, with no authentication. Only enable that on networks you trust</td></tr>
+</table>
+<p>Clicking buttons such as “Privacy policy” or “Support” in the app opens pages of this site in your system browser. That visit is one you start yourself.</p>
+
+<h2>6. Privacy manifest, Apple and download channels</h2>
+<ul>
+  <li>The Mac App Store edition ships a privacy manifest (PrivacyInfo.xcprivacy): no tracking, no data types collected, and it declares four system API categories: file timestamps (to show and compare file dates in the folders you chose), system boot time (to show uptime), disk space (to show capacity and free space) and UserDefaults (to read and write preferences visible only to the app itself)</li>
+  <li>When you download PC Specs from the App Store, Apple processes download-related information under its own privacy policy; we cannot use it to identify you</li>
+  <li>When you download the full edition from GitHub Releases, GitHub processes ordinary request information (such as your IP address, browser type and download time) under its own privacy policy</li>
+  <li>This site is hosted on Cloudflare Pages, which processes ordinary request information when you visit. The site uses no cookies and no analytics scripts</li>
+</ul>
+
+<h2>7. Third-party components</h2>
+<p>PC Specs is built from open-source libraries that run entirely on your computer, with no analytics or ads:</p>
+<table>
+<tr><th>Component</th><th>Purpose</th></tr>
+<tr><td>GPUI, GPUI Kit</td><td>Interface rendering</td></tr>
+<tr><td>sysinfo and similar system libraries</td><td>Reading processor, memory, disk, network and battery information</td></tr>
+<tr><td>ureq + rustls (full edition only)</td><td>The HTTPS requests for the public IP lookup and webhooks in section 5</td></tr>
+<tr><td>axum + tokio (full edition only)</td><td>The local HTTP data API in section 5</td></tr>
+</table>
+
+<h2>8. Children's privacy</h2>
+<p>PC Specs does not collect anyone's data, including children's data.</p>
+
+<h2>9. Changes to this policy</h2>
+<p>If the policy changes, this page is updated and the “Last updated” date above is revised. Significant changes to how data is handled are also noted in the app's release notes.</p>
+
+<h2>10. Contact</h2>
+<p>For questions or suggestions about this policy, email <a href="mailto:pc-specs@xwzy.dev">pc-specs@xwzy.dev</a></p>
+</div></main>
+
+<footer class="site"><div class="wrap">
+  <span>© 2026 xwzy. All rights reserved.</span>
+  <span><a href="support.html">Support</a> · <a href="privacy.html">Privacy Policy</a></span>
+</div></footer>
+</body>
+</html>

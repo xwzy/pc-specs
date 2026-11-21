@@ -269,8 +269,15 @@ fn parse_speed(s: &str) -> Option<u32> {
 }
 
 /// 风扇、功率、电压、电流，以及 CPU / GPU 逐核温度（其余温度由 sysinfo 通过 HID 读取）。
+#[cfg(not(feature = "appstore"))]
 pub fn extra_sensors() -> Vec<SensorReading> {
     super::macos_smc::readings()
+}
+
+/// 商店版没有传感器（见 `edition::SENSORS`）。
+#[cfg(feature = "appstore")]
+pub fn extra_sensors() -> Vec<SensorReading> {
+    Vec::new()
 }
 
 pub fn memory_breakdown() -> Option<MemoryBreakdown> {
@@ -323,6 +330,32 @@ pub fn process_memory(pid: u32) -> Option<u64> {
         )
     };
     (status == 0).then_some(info.ri_phys_footprint)
+}
+
+/// 按 pid 查进程名。App Sandbox 里系统不让应用枚举别的进程，但允许按 pid 查询名字和可执行文件路径。
+/// 先用 `proc_name`（最长 31 个字符；别的用户的进程查不到），查不到就取可执行文件路径的文件名。
+#[cfg(feature = "appstore")]
+pub fn process_name(pid: u32) -> Option<String> {
+    let pid = libc::c_int::try_from(pid).ok()?;
+    let mut buffer = [0_u8; 256];
+    // SAFETY: 缓冲区长度和传入的一致；返回值是写入的字节数，出错为非正数。
+    let written = unsafe { libc::proc_name(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if written > 0 {
+        return String::from_utf8_lossy(&buffer[..written as usize])
+            .trim()
+            .to_string()
+            .into();
+    }
+    let mut path = vec![0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: 同上，缓冲区长度和传入的一致。
+    let written = unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&path[..written as usize]).into_owned();
+    std::path::Path::new(&path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
 }
 
 pub fn desktop_env() -> Option<String> {

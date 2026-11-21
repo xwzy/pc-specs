@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Mac App Store 版的模板：__VERSION__ / __BUILD__ / __MIN_OS__ / __YEAR__ 由 scripts/macos/appstore.sh 替换。
+     版本号来自根 Cargo.toml 的 [workspace.package].version，构建号来自 [workspace.metadata.appstore].build。
+     Xcode 编译时会写进去的 DT* 编译环境信息，也由脚本按本机的 Xcode 补上。
+     和 ../Info.plist（自行发布版）的区别：没有 NSAppleEventsUsageDescription 与文件夹访问说明
+     （商店版沙盒里没有「系统事件」自动化，文件夹由用户在对话框里选），多了 ITSAppUsesNonExemptEncryption。 -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>PC Specs</string>
+  <key>CFBundleDisplayName</key><string>PC Specs</string>
+  <key>CFBundleIdentifier</key><string>com.xwzy.pc-specs</string>
+  <key>CFBundleExecutable</key><string>pc-specs</string>
+  <key>CFBundleIconFile</key><string>icon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleSupportedPlatforms</key>
+  <array>
+    <string>MacOSX</string>
+  </array>
+  <!-- 对外显示的版本号，和构建号是两回事。 -->
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <!-- 构建号：纯数字，每次上传 App Store Connect 都必须比上一次大。 -->
+  <key>CFBundleVersion</key><string>__BUILD__</string>
+  <!-- 声明界面语言：系统自带的对话框、菜单项才会跟着显示中文，App Store 也据此显示支持的语言。 -->
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
+  <key>LSMinimumSystemVersion</key><string>__MIN_OS__</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+  <!-- 出口合规：应用本身不实现、也不调用任何加密（没有联网功能，也没有 TLS 库），只会用到系统自带的、
+       以及 SHA-256 哈希这类不算「非豁免加密」的东西。 -->
+  <key>ITSAppUsesNonExemptEncryption</key><false/>
+  <key>NSHumanReadableCopyright</key><string>Copyright © __YEAR__ pc-specs contributors. MIT License.</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict>
+</plist>

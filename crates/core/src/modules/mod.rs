@@ -2,6 +2,8 @@
 
 pub mod battery;
 pub mod cpu;
+// 商店版不检测编程环境：要登录 shell 去运行用户装的各种工具，沙盒里既不允许也没有意义。
+#[cfg(not(feature = "appstore"))]
 pub mod dev_env;
 pub mod display;
 pub mod gpu;
@@ -37,6 +39,7 @@ pub enum Module {
 }
 
 impl Module {
+    #[cfg(not(feature = "appstore"))]
     pub const ALL: [Module; 13] = [
         Module::Host,
         Module::Os,
@@ -51,6 +54,22 @@ impl Module {
         Module::Battery,
         Module::Peripherals,
         Module::DevEnv,
+    ];
+
+    /// 商店版没有传感器和编程环境两个模块（见 `edition`），不必采集。
+    #[cfg(feature = "appstore")]
+    pub const ALL: [Module; 11] = [
+        Module::Host,
+        Module::Os,
+        Module::Cpu,
+        Module::Gpu,
+        Module::Memory,
+        Module::Storage,
+        Module::Motherboard,
+        Module::Network,
+        Module::Display,
+        Module::Battery,
+        Module::Peripherals,
     ];
 }
 
@@ -116,7 +135,10 @@ fn collect_unchecked(module: Module) -> ModuleData {
         Module::Sensors => ModuleData::Sensors(sensors::collect()),
         Module::Battery => ModuleData::Battery(battery::collect()),
         Module::Peripherals => ModuleData::Peripherals(peripherals::collect()),
+        #[cfg(not(feature = "appstore"))]
         Module::DevEnv => ModuleData::DevEnv(dev_env::collect()),
+        #[cfg(feature = "appstore")]
+        Module::DevEnv => ModuleData::DevEnv(DevEnvInfo::default()),
     }
 }
 

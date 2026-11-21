@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC Specs - 电脑配置与实时监控</title>
+<meta name="description" content="PC Specs 是一款跨平台的电脑配置查看与实时监控工具：硬件信息一屏看清，CPU、内存、网络、磁盘实时走势，菜单栏监控，监控大屏，还能把磁盘画成树图，找出占空间的大文件和重复文件。完全在本机运行，不收集数据。">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="alternate" hreflang="zh-Hans" href="https://pc-specs.xwzy.dev/">
+<link rel="alternate" hreflang="en" href="https://pc-specs.xwzy.dev/en/">
+<link rel="alternate" hreflang="x-default" href="https://pc-specs.xwzy.dev/">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="./"><img src="assets/icon.png" alt="">PC Specs</a>
+  <nav><a class="active" href="./">首页</a><a href="support.html">技术支持</a><a href="privacy.html">隐私政策</a><details class="language-switcher"><summary>简体中文</summary><div class="language-menu">
+    <a href="https://pc-specs.xwzy.dev/" aria-current="true">简体中文</a>
+    <a href="https://pc-specs.xwzy.dev/en/">English</a>
+  </div></details></nav>
+</div></header>
+
+<main><div class="wrap">
+<section class="hero">
+  <img class="icon" src="assets/icon.png" alt="PC Specs 图标">
+  <h1>PC Specs</h1>
+  <p class="lead">看清电脑配置，盯紧实时状态，找出占满磁盘的文件</p>
+  <a class="btn" href="https://github.com/xwzy/pc-specs/releases/latest">下载全功能版</a>
+  <p class="download-meta">Windows · macOS · Linux · 免费开源（MIT）</p>
+  <p class="download-help">在 GitHub Releases 页面选择对应系统的安装包。同一份源码也编译成功能精简的 Mac App Store 版，区别见下面「两个版本」。</p>
+  <img class="shot" src="assets/screenshots/zh/01-overview.jpg" alt="PC Specs 概览页：CPU、内存、显卡、存储、网络和散热状态，每张卡片都带实时走势">
+</section>
+
+<h2>主要功能</h2>
+<div class="grid">
+  <div class="card"><h3>概览</h3><p>一屏看清 CPU、内存、显卡、存储、网络和散热状态，有没有异常，一句话告诉你；每张卡片都带实时走势，点一下进入详情。</p></div>
+  <div class="card"><h3>硬件详情</h3><p>处理器、显卡、内存、存储、主板、显示、网络、电池、外设、操作系统逐项展开；内存构成、Wi-Fi 信号、电池健康一目了然。系统没有提供的信息如实写明，不编数字。</p></div>
+  <div class="card"><h3>实时监控</h3><p>CPU、内存、网络、磁盘读写和显卡的实时走势，每个 CPU 核心单独显示；可以暂停、清空，历史时长在 1、5、10 分钟之间切换。</p></div>
+  <div class="card"><h3>顶栏监控</h3><p>macOS 菜单栏里放上 CPU、内存、存储、网速，样式和顺序随你调；点开弹出详细面板，可看 1 小时到 30 天的走势。</p></div>
+  <div class="card"><h3>监控大屏</h3><p>把实时状态铺满另一块显示器：15 套配色、5 种布局，横屏、竖屏、超宽屏自动适配；开着的时候保持屏幕常亮。</p></div>
+  <div class="card"><h3>存储空间分析</h3><p>选一块磁盘或任意文件夹，画成矩形树图或旋转图，色块越大占用越多；有最大文件榜、重复文件（按内容比对）和「相比上次什么变大了」。</p></div>
+  <div class="card"><h3>收集箱与测速</h3><p>想清理的文件先放进收集箱，核对好总量再一次性移到废纸篓或回收站；磁盘速度测试能测顺序读写和 4K 随机读写，并与上次对比。</p></div>
+  <div class="card"><h3>规则与通知</h3><p>哪个读数、超过多少、持续多久，就发一条系统通知，带冷却时间，不会刷屏；内置 CPU、内存、磁盘三条默认规则。</p></div>
+  <div class="card"><h3>导出与设置</h3><p>导出 Markdown、JSON 或 PNG 长图，默认隐去 MAC 地址、序列号、主机名；深色、浅色或跟随系统；设置可以导出，换一台电脑导入即可。</p></div>
+</div>
+<div class="promise"><strong>完全在本机运行。</strong>没有账号、广告和统计，不收集任何数据。Mac App Store 版没有联网权限；全功能版只在你主动打开某项功能、或正在看对应页面时才会向外联网，详见<a href="privacy.html">隐私政策</a>。</div>
+
+<h2 id="editions">两个版本</h2>
+<p>同一份源码，编译时选择版本。从 GitHub 下载的是全功能版；Mac App Store 版要在苹果的沙盒里运行，不能读取私有接口、不能枚举其他进程、不能联网，所以功能更少：</p>
+<table>
+<tr><th>能力</th><th>全功能版（GitHub 下载）</th><th>Mac App Store 版</th></tr>
+<tr><td>平台</td><td>Windows、macOS、Linux</td><td>macOS 13 及以上</td></tr>
+<tr><td>概览、实时监控、顶栏监控、监控大屏、各硬件页、规则与通知</td><td>有</td><td>有</td></tr>
+<tr><td>存储空间分析、磁盘速度测试</td><td>整块磁盘或任意文件夹</td><td>只能分析你在对话框里亲自选的文件夹；测速只测系统盘</td></tr>
+<tr><td>温度、风扇、电压、功耗等传感器</td><td>有</td><td>无（只有系统给出的「散热状态」）</td></tr>
+<tr><td>进程列表与每个进程的占用、网络流量</td><td>有</td><td>无</td></tr>
+<tr><td>开发环境检测、启动项管理、应用管理、系统缓存清理</td><td>有</td><td>无</td></tr>
+<tr><td>公网 IP 查询、网络延迟检测、Webhook 推送</td><td>有（见隐私政策）</td><td>无，应用不联网</td></tr>
+<tr><td>本机 HTTP 数据接口</td><td>有，默认只在本机可访问</td><td>无</td></tr>
+</table>
+
+<h2>界面一览</h2>
+<div class="gallery">
+  <img src="assets/screenshots/zh/02-hardware.jpg" alt="硬件详情：处理器与内存页，内存构成一目了然" loading="lazy">
+  <img src="assets/screenshots/zh/03-realtime.jpg" alt="实时监控：CPU、内存、网络、磁盘读写走势" loading="lazy">
+  <img src="assets/screenshots/zh/04-menubar.jpg" alt="菜单栏监控：CPU、内存、存储、网络的详细面板" loading="lazy">
+  <img src="assets/screenshots/zh/05-bigscreen.jpg" alt="监控大屏：把实时状态铺满副屏" loading="lazy">
+  <img src="assets/screenshots/zh/06-storage-map.jpg" alt="存储空间分析：矩形树图" loading="lazy">
+  <img src="assets/screenshots/zh/07-duplicates.jpg" alt="重复文件与大文件：核对后一次性移到废纸篓" loading="lazy">
+  <img src="assets/screenshots/zh/08-appearance.jpg" alt="深色与浅色主题" loading="lazy">
+</div>
+
+<h2>系统要求</h2>
+<p>Windows · macOS 11 及以上（Mac App Store 版需要 macOS 13 及以上）· Linux（Ubuntu 22.04+、Debian 12+、Fedora 36+ 及同期的发行版，需要 Vulkan 驱动和 Wayland / X11 会话）。界面语言：简体中文、English，可在设置里切换。</p>
+<p>源码和各系统的安装说明在 <a href="https://github.com/xwzy/pc-specs">GitHub</a>。</p>
+</div></main>
+
+<footer class="site"><div class="wrap">
+  <span>© 2026 xwzy. All rights reserved.</span>
+  <span><a href="https://pc-specs.xwzy.dev/support.html">技术支持</a> · <a href="https://pc-specs.xwzy.dev/privacy.html">隐私政策</a> · <a href="mailto:pc-specs@xwzy.dev">反馈问题</a></span>
+</div></footer>
+</body>
+</html>

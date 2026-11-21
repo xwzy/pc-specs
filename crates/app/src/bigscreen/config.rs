@@ -41,6 +41,15 @@ impl WidgetKind {
         Self::Clock,
     ];
 
+    /// 当前版本有没有这个组件：商店版读不到温度、列不出进程（见 `pc_specs_core::edition`）。
+    pub fn available(self) -> bool {
+        match self {
+            Self::Temperature => pc_specs_core::edition::SENSORS,
+            Self::Processes => pc_specs_core::edition::PROCESS_LIST,
+            _ => true,
+        }
+    }
+
     pub fn key(self) -> &'static str {
         match self {
             Self::Clock => "clock",
@@ -276,9 +285,10 @@ impl BigScreenSettings {
     /// 把手工改坏或旧版本缺失的值收敛回合法范围：每种组件恰好一个，尺寸、缩放在范围内。
     pub fn normalize(&mut self) {
         let mut seen = HashSet::new();
-        self.widgets.retain(|widget| seen.insert(widget.kind));
+        self.widgets
+            .retain(|widget| widget.kind.available() && seen.insert(widget.kind));
         for kind in WidgetKind::ALL {
-            if seen.insert(kind) {
+            if kind.available() && seen.insert(kind) {
                 let (w, h) = kind.default_cell();
                 self.widgets.push(WidgetConfig {
                     kind,
@@ -420,6 +430,7 @@ impl Preset {
         let layout = self.layout();
         let mut widgets: Vec<WidgetConfig> = layout
             .iter()
+            .filter(|(kind, ..)| kind.available())
             .map(|&(kind, w, h)| WidgetConfig {
                 kind,
                 enabled: true,
@@ -428,7 +439,7 @@ impl Preset {
             })
             .collect();
         for kind in WidgetKind::ALL {
-            if !layout.iter().any(|(k, ..)| *k == kind) {
+            if kind.available() && !layout.iter().any(|(k, ..)| *k == kind) {
                 let (w, h) = kind.default_cell();
                 widgets.push(WidgetConfig {
                     kind,

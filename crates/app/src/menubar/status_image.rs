@@ -31,17 +31,16 @@ impl StatusImage {
     /// 直通（非预乘）alpha 的像素。
     #[cfg(target_os = "macos")]
     pub fn straight_rgba(&self) -> Vec<u8> {
+        let (pixels, _) = self.rgba.as_chunks::<4>();
         let mut out = Vec::with_capacity(self.rgba.len());
-        for px in self.rgba.chunks_exact(4) {
-            let alpha = px[3] as u32;
-            if alpha == 0 {
-                out.extend_from_slice(&[0, 0, 0, 0]);
-            } else {
-                for &channel in &px[..3] {
-                    out.push(((channel as u32 * 255 + alpha / 2) / alpha).min(255) as u8);
-                }
-                out.push(px[3]);
+        for &[r, g, b, a] in pixels {
+            let alpha = a as u32;
+            for channel in [r, g, b] {
+                // 完全透明的像素没有颜色，除不了就记 0。
+                let straight = (channel as u32 * 255 + alpha / 2).checked_div(alpha);
+                out.push(straight.unwrap_or(0).min(255) as u8);
             }
+            out.push(a);
         }
         out
     }

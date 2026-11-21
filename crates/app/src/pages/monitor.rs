@@ -10,6 +10,7 @@ use gpui_kit::{
     AnyElement, App, Entity, IntoElement as _, ParentElement as _, SharedString, Styled as _, div,
     rems,
 };
+use pc_specs_core::edition;
 use rust_i18n::t;
 
 /// 图表区的统一高度。
@@ -187,8 +188,8 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
     // 温度：整机最高值，以及（如果能识别）CPU 温度。
     let hottest = latest.and_then(|t| t.max_temperature());
     let has_temp = s.ticks.iter().any(|t| t.max_temperature().is_some());
-    cards.push(if has_temp {
-        chart_card(
+    if has_temp {
+        cards.push(chart_card(
             "monitor-temp",
             t!("monitor_temp_unit", unit = temp_unit_name).into_owned(),
             hottest.map_or("—".to_string(), |v| settings.temp(v)),
@@ -213,15 +214,18 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
                 cx,
             ),
             cx,
-        )
-    } else {
-        ui::section(
-            "monitor-temp",
-            t!("monitor_temp_unit", unit = temp_unit_name).into_owned(),
-        )
-        .child(ui::muted(t!("monitor_no_temp").into_owned(), cx))
-        .into_any_element()
-    });
+        ));
+    } else if edition::SENSORS {
+        // 这台机器读不到温度时，留一块说明；商店版根本不读传感器，那就不摆一块永远空着的卡片。
+        cards.push(
+            ui::section(
+                "monitor-temp",
+                t!("monitor_temp_unit", unit = temp_unit_name).into_owned(),
+            )
+            .child(ui::muted(t!("monitor_no_temp").into_owned(), cx))
+            .into_any_element(),
+        );
+    }
 
     // GPU：最多画两块。
     let gpu_names: Vec<String> = s

@@ -18,7 +18,7 @@ mod treemap;
 
 use crate::settings::SizeUnit;
 use crate::state::{AppState, spawn_thread};
-use crate::{fmt, ui};
+use crate::{bookmarks, fmt, ui};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::NotificationType;
 use gpui_kit::component::{WindowExt as _, button::ButtonVariant};
@@ -27,6 +27,7 @@ use gpui_kit::{
     KeyDownEvent, ParentElement as _, PathPromptOptions, Pixels, Point, Render, SharedString,
     Styled as _, Subscription, Window, div,
 };
+use pc_specs_core::edition;
 use pc_specs_core::space::{self, Category, Kind, Node, Tree};
 use pc_specs_core::util::guarded;
 use rust_i18n::t;
@@ -591,10 +592,42 @@ fn user_path(path: PathBuf) -> PathBuf {
     path
 }
 
+/// 用户真正的家目录。沙盒里 `$HOME` 被指到应用自己的容器，`dirs::home_dir()` 拿到的是那个容器，
+/// 所以先问系统账户；问不到再退回 `dirs`。
+fn user_home() -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        // SAFETY: `getpwuid_r` 把结果写进我们给的 `pwd` 和 `buf`；`pw_dir` 指向 `buf` 里的 C 字符串，
+        // 在下面拷贝出来之前，`buf` 一直活着。
+        let account = unsafe {
+            let mut pwd: libc::passwd = std::mem::zeroed();
+            let mut buf = vec![0 as libc::c_char; 4096];
+            let mut found: *mut libc::passwd = std::ptr::null_mut();
+            let status = libc::getpwuid_r(
+                libc::getuid(),
+                &mut pwd,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut found,
+            );
+            (status == 0 && !found.is_null() && !pwd.pw_dir.is_null()).then(|| {
+                PathBuf::from(std::ffi::OsStr::from_bytes(
+                    std::ffi::CStr::from_ptr(pwd.pw_dir).to_bytes(),
+                ))
+            })
+        };
+        if account.as_ref().is_some_and(|dir| dir.is_absolute()) {
+            return account;
+        }
+    }
+    dirs::home_dir()
+}
+
 /// 不允许从这里删的路径：磁盘根、各卷顶层的系统目录、用户的个人文件夹本身。
 /// 别的程序、系统本身要用它们，删掉的后果远不是「腾出空间」。
 fn is_protected(path: &Path) -> bool {
-    if dirs::home_dir().is_some_and(|home| home == path) {
+    if user_home().is_some_and(|home| home == path) {
         return true;
     }
     // 根之下只隔一层（`/usr`、`C:\Windows`、`C:\Users`）。
@@ -734,9 +767,82 @@ impl StoragePage {
     /// 记下最近扫描过的文件夹，下次在「选位置」页面上一点就能再扫。
     fn remember(&mut self, path: &Path, cx: &mut Context<Self>) {
         let path = path.to_path_buf();
+        // 沙盒里重启之后只有书签能让这个文件夹再被打开：趁现在还有权限存一份；存不下的就不记，
+        // 免得列表里摆着点不开的项。
+        let bookmark = if edition::SANDBOXED {
+            let Some(bookmark) = bookmarks::save(&path) else {
+                return;
+            };
+            Some(bookmark)
+        } else {
+            None
+        };
         self.app.update(cx, |state, cx| {
-            state.update_settings(|s| push_recent(&mut s.storage_recent, &path), cx)
+            state.update_settings(
+                |s| {
+                    push_recent(&mut s.storage_recent, &path);
+                    if let Some(bookmark) = bookmark {
+                        s.storage_bookmarks
+                            .insert(path.display().to_string(), bookmark);
+                    }
+                    // 掉出最近列表的文件夹，书签也跟着丢。
+                    let recent = &s.storage_recent;
+                    s.storage_bookmarks.retain(|key, _| recent.contains(key));
+                },
+                cx,
+            )
         });
+    }
+
+    /// 点了「最近」里的文件夹。沙盒里要先用书签把访问权限要回来；要不回来
+    /// （文件夹没了、授权失效）就从列表里去掉，请用户重新选。
+    fn open_recent(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if !edition::SANDBOXED {
+            self.start(folder_target(path), cx);
+            return;
+        }
+        let key = path.display().to_string();
+        let saved = self
+            .app
+            .read(cx)
+            .settings
+            .storage_bookmarks
+            .get(&key)
+            .cloned();
+        let Some((path, refreshed)) = saved.as_deref().and_then(bookmarks::open) else {
+            self.app.update(cx, |state, cx| {
+                state.update_settings(
+                    |s| {
+                        s.storage_recent.retain(|old| *old != key);
+                        s.storage_bookmarks.remove(&key);
+                    },
+                    cx,
+                )
+            });
+            let message = t!("sa_recent_lost", name = folder_target(path).label).into_owned();
+            self.toast(NotificationType::Warning, message, cx);
+            return;
+        };
+        if let Some(fresh) = refreshed {
+            self.app.update(cx, |state, cx| {
+                state.update_settings(
+                    |s| {
+                        s.storage_bookmarks.insert(key, fresh);
+                    },
+                    cx,
+                )
+            });
+        }
+        self.start(folder_target(path), cx);
+    }
+
+    /// 去分析一个卷。沙盒读不了没被授权的位置，所以改成请用户在对话框里选这块盘（或者其中的文件夹）。
+    fn analyze_volume(&mut self, target: Target, cx: &mut Context<Self>) {
+        if edition::SANDBOXED {
+            self.choose_folder(cx);
+        } else {
+            self.start(target, cx);
+        }
     }
 
     /// 隔一阵子（后台）问一遍各个卷的可清除空间：它要问系统，不适合每次重画都问。
@@ -778,6 +884,9 @@ impl StoragePage {
     }
 
     fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        if mode == Mode::Clean && !edition::SYSTEM_MANAGEMENT {
+            return;
+        }
         if self.mode != mode {
             self.mode = mode;
             match mode {
@@ -1392,17 +1501,18 @@ impl Render for StoragePage {
                 .update(cx, |input, cx| input.set_value("", window, cx));
         }
         let page = cx.entity();
-        let switch = ui::segmented(
-            "storage-mode",
-            vec![
-                (Mode::Overview, t!("sa_mode_overview").into_owned()),
-                (Mode::Analyze, t!("sa_mode_analyze").into_owned()),
-                (Mode::Clean, t!("sa_mode_clean").into_owned()),
-                (Mode::Speed, t!("sa_mode_speed").into_owned()),
-            ],
-            self.mode,
-            move |mode, cx| page.update(cx, |page, cx| page.set_mode(mode, cx)),
-        )
+        // 清理动的是用户家目录里的缓存、日志和各种开发产物，沙盒不放行，商店版没有这一页。
+        let mut modes = vec![
+            (Mode::Overview, t!("sa_mode_overview").into_owned()),
+            (Mode::Analyze, t!("sa_mode_analyze").into_owned()),
+        ];
+        if edition::SYSTEM_MANAGEMENT {
+            modes.push((Mode::Clean, t!("sa_mode_clean").into_owned()));
+        }
+        modes.push((Mode::Speed, t!("sa_mode_speed").into_owned()));
+        let switch = ui::segmented("storage-mode", modes, self.mode, move |mode, cx| {
+            page.update(cx, |page, cx| page.set_mode(mode, cx))
+        })
         .into_any_element();
 
         // 绘制是系统回调直接驱动的，里面 panic 会带走整个进程；
@@ -1501,7 +1611,8 @@ mod tests {
         assert!(is_protected(Path::new("/Users")));
         assert!(!is_protected(Path::new("/Users/someone/Downloads/big.iso")));
         assert!(!is_protected(Path::new("/var/log/system.log")));
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = user_home() {
+            assert!(home.is_absolute());
             assert!(is_protected(&home));
             assert!(!is_protected(&home.join("Downloads")));
         }

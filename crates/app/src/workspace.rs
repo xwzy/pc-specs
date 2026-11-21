@@ -247,9 +247,12 @@ impl Workspace {
         let group = |label: Option<String>, pages: &[Page]| {
             NavGroup::new(
                 label,
-                SidebarMenu::new()
-                    .gap_0p5()
-                    .children(pages.iter().map(|page| self.nav_item(*page, current))),
+                SidebarMenu::new().gap_0p5().children(
+                    pages
+                        .iter()
+                        .filter(|page| page.available())
+                        .map(|page| self.nav_item(*page, current)),
+                ),
             )
         };
         Sidebar::new("main-sidebar")
@@ -302,14 +305,10 @@ impl Workspace {
                 Some(t!("nav_group_system").into_owned()),
                 &[Page::Os, Page::DevEnv],
             ))
+            // 各页面在当前系统和版本上有没有，由 `Page::available` 决定，`group` 会把没有的略过。
             .child(group(
                 Some(t!("nav_group_tools").into_owned()),
-                // 没有「应用」可管的系统（Linux）不摆这一页。
-                if pc_specs_core::apps::SUPPORTED {
-                    &[Page::Rules, Page::Startup, Page::Apps][..]
-                } else {
-                    &[Page::Rules, Page::Startup][..]
-                },
+                &[Page::Rules, Page::Startup, Page::Apps],
             ))
     }
 

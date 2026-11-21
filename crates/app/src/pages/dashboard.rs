@@ -194,39 +194,54 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
         cx,
     ));
 
-    // 温度：整机最热的那个传感器，卡片上写明是谁。
-    let hottest = latest.and_then(|t| {
-        t.temperatures
-            .iter()
-            .filter(|r| r.value.is_finite())
-            .max_by(|a, b| a.value.total_cmp(&b.value))
-    });
-    let temp_unit = settings.temp_unit;
-    tiles.push(tile(
-        "temperature",
-        IconName::Thermometer,
-        t!("dash_card_temp").into_owned(),
-        hottest.map_or("—".to_string(), |r| settings.temp(r.value)),
-        vec![match hottest {
-            Some(r) => format!("{} · {}", t!("dash_hottest"), fmt::sensor_label(r)),
-            None => t!("dash_no_temp").into_owned(),
-        }],
-        hottest.map(|r| r.value.clamp(0.0, 100.0)),
-        hottest.is_some().then(|| {
-            chart::sparkline(
-                "dash-spark-temp",
-                chart::series(s, Some(SPARK_POINTS), move |t| {
-                    t.max_temperature()
-                        .map_or(0.0, |v| fmt::temp_chart_value(v, temp_unit))
-                }),
-                None,
-                palette[4],
-            )
-        }),
-        Page::Sensors,
-        state,
-        cx,
-    ));
+    // 温度：整机最热的那个传感器，卡片上写明是谁。商店版读不了传感器，只展示系统给的热压力等级。
+    if pc_specs_core::edition::SENSORS {
+        let hottest = latest.and_then(|t| {
+            t.temperatures
+                .iter()
+                .filter(|r| r.value.is_finite())
+                .max_by(|a, b| a.value.total_cmp(&b.value))
+        });
+        let temp_unit = settings.temp_unit;
+        tiles.push(tile(
+            "temperature",
+            IconName::Thermometer,
+            t!("dash_card_temp").into_owned(),
+            hottest.map_or("—".to_string(), |r| settings.temp(r.value)),
+            vec![match hottest {
+                Some(r) => format!("{} · {}", t!("dash_hottest"), fmt::sensor_label(r)),
+                None => t!("dash_no_temp").into_owned(),
+            }],
+            hottest.map(|r| r.value.clamp(0.0, 100.0)),
+            hottest.is_some().then(|| {
+                chart::sparkline(
+                    "dash-spark-temp",
+                    chart::series(s, Some(SPARK_POINTS), move |t| {
+                        t.max_temperature()
+                            .map_or(0.0, |v| fmt::temp_chart_value(v, temp_unit))
+                    }),
+                    None,
+                    palette[4],
+                )
+            }),
+            Page::Sensors,
+            state,
+            cx,
+        ));
+    } else if let Some(pressure) = latest.and_then(|t| t.thermal_pressure) {
+        tiles.push(tile(
+            "thermal",
+            IconName::Thermometer,
+            t!("dash_card_thermal").into_owned(),
+            fmt::thermal_pressure(pressure),
+            vec![t!("dash_thermal_hint").into_owned()],
+            None,
+            None,
+            Page::Cpu,
+            state,
+            cx,
+        ));
+    }
 
     // 等宽网格：整行放满，最后一行不会被拉宽，窗口窄了自动少放一列。
     let tile_grid = div()
@@ -360,6 +375,9 @@ fn tile(
 ) -> AnyElement {
     let state = state.clone();
     let ring = cx.theme().ring;
+    // 没有进度条和走势图的卡片（散热状态、读不到温度）底下有富余的高度，说明文字长了就折行，不截断；
+    // 有图表的卡片每条说明只占一行，放不下才用省略号。
+    let roomy = percent.is_none() && spark.is_none();
     v_flex()
         .id(SharedString::from(format!("tile-{key}")))
         .min_w_0()
@@ -395,7 +413,7 @@ fn tile(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .truncate()
+                        .when(!roomy, |this| this.truncate())
                         .child(line)
                 })),
         )

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC Specs Support</title>
+<meta name="description" content="Frequently asked questions and how to reach us about PC Specs.">
+<link rel="icon" href="../assets/icon.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="alternate" hreflang="zh-Hans" href="https://pc-specs.xwzy.dev/support.html">
+<link rel="alternate" hreflang="en" href="https://pc-specs.xwzy.dev/en/support.html">
+<link rel="alternate" hreflang="x-default" href="https://pc-specs.xwzy.dev/support.html">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="./"><img src="../assets/icon.png" alt="">PC Specs</a>
+  <nav><a href="./">Home</a><a class="active" href="support.html">Support</a><a href="privacy.html">Privacy Policy</a><details class="language-switcher"><summary>English</summary><div class="language-menu">
+    <a href="https://pc-specs.xwzy.dev/support.html">简体中文</a>
+    <a href="https://pc-specs.xwzy.dev/en/support.html" aria-current="true">English</a>
+  </div></details></nav>
+</div></header>
+
+<main><div class="wrap">
+<h1>PC Specs Support</h1>
+<p class="meta">System info and live monitor · Windows, macOS, Linux · The Mac App Store edition needs macOS 13 or later</p>
+
+<h2>Contact and feedback</h2>
+<p>For problems or ideas, email <a href="mailto:pc-specs@xwzy.dev">pc-specs@xwzy.dev</a>. Users of the full edition can also open an issue on <a href="https://github.com/xwzy/pc-specs/issues">GitHub Issues</a>.</p>
+<p>To help us find the cause faster, please include:</p>
+<ul>
+  <li>The PC Specs version (Settings → About), your system version, and whether you use the full edition or the Mac App Store edition</li>
+  <li>The steps to reproduce it and the page where it happens</li>
+  <li>A screenshot if you can, and <code>crash.log</code> if the app has crashed (see section 4 of the <a href="privacy.html">privacy policy</a> for where it lives)</li>
+</ul>
+
+<h2>FAQ</h2>
+
+<details open><summary>Does PC Specs upload my data?</summary>
+<p>No. There are no accounts, analytics or ads, and nothing is collected. The Mac App Store edition has no network access. In the full edition only the public IP lookup, the network latency check, webhooks and the local HTTP API use the network: outgoing requests happen only when you turned the feature on or are looking at the page that uses it, and the local API is reachable from this computer only by default. See the <a href="privacy.html">privacy policy</a>.</p></details>
+
+<details><summary>What is the difference between the full edition and the Mac App Store edition?</summary>
+<p>It is the same code base, with the edition chosen at build time. What you download from GitHub is the full edition. The Mac App Store edition runs inside Apple's sandbox, so it has no sensors (temperature, fans and so on), process list, dev environment check, startup item management, app management or system cache cleaning; it does not go online and has no local HTTP API; and storage analysis can only read folders you pick yourself. The full comparison table is on the <a href="./#editions">home page</a>.</p></details>
+
+<details><summary>Why does the Mac App Store edition have no temperatures, fans or processes?</summary>
+<p>Reading temperatures and fans on macOS needs private system interfaces, and the sandbox does not let an app list other apps' processes, so the store edition only shows the system's public “thermal state”. For temperatures, fans and per-process usage, use the full edition from GitHub.</p></details>
+
+<details><summary>How do I analyze disk space?</summary>
+<p>Open the Storage page, switch to “Space analysis” and click “Choose a folder…” (the full edition can also pick a whole disk). The scan reads file names, sizes and dates and draws a treemap. Switch to the sunburst, double-click a folder to go in, use the breadcrumb above to go back, and click the legend to filter by file type. The lists below the map hold “Largest files”, “This folder”, “Duplicates” and “Changes” since the last scan.</p>
+<p>The Mac App Store edition can only read the locations you choose in the dialog, so choose whatever you want to look at. Folders protected by macOS may still be unreadable even if you pick them; that is a system restriction.</p></details>
+
+<details><summary>How do I find duplicates? Could cleaning delete something by mistake?</summary>
+<p>Under “Space analysis”, open “Duplicates” and click “Find duplicates”. The app compares contents, only for files of 1 MiB or larger, and skips app bundles, system folders and app-data folders. Every group keeps at least one copy. Click “Add to collector” and the extra copies go into the collector first; only after you check the total are they all moved to the Trash or Recycle Bin together. The app never permanently deletes them itself, and you can still restore them from the Trash or Recycle Bin.</p>
+<p>Note: on APFS, copies made with Finder's Duplicate can share their storage, so removing one may free less space than shown.</p></details>
+
+<details><summary>How do I set up the menu bar items?</summary>
+<p>Open the “Menu bar” page under “Desktop” in the sidebar. Switching, ordering, style, refresh interval, labels and colors are all there, with a live preview at the top. Click any item in the menu bar to open its detail panel, with trends for 1 hour, 24 hours, 7 days and 30 days.</p>
+<p>When the menu bar is crowded (especially on displays with a notch), macOS hides the icons that do not fit. Use fewer items, or tuck away other menu bar icons.</p></details>
+
+<details><summary>How does the Monitoring Wall work?</summary>
+<p>Open the “Monitoring Wall” page under “Desktop” in the sidebar and click “Open Monitoring Wall”. It is a separate window you can drag to a second display or switch to full screen. The bar at the bottom changes the theme, toggles full screen and opens its settings, where you can choose the display, layout and theme, or have it open automatically at launch. The screen is kept awake while the wall is open.</p></details>
+
+<details><summary>How do I make it start at login?</summary>
+<p>Use “Launch at login” in Settings; it is off by default. With the tray enabled, the app starts in the tray at login without opening the main window. On macOS you can turn it off at any time in System Settings → General → Login Items.</p></details>
+
+<details><summary>A rule fired but I got no notification</summary>
+<p>First check that the master switch for rules in Settings is on, then that System Settings → Notifications allows PC Specs (macOS asks before the first notification). On the Rules page, expand a rule and click “Try it” to send a test notification right away. Rules have a cooldown, so the same rule will not alert again during it.</p></details>
+
+<details><summary>Does an exported report contain my private information?</summary>
+<p>Not by default: exports redact the hostname, username, MAC addresses, serial numbers and public IP. To keep them, turn on “Include sensitive data” in Settings. Check a report or screenshot yourself before sharing it.</p></details>
+
+<details><summary>The numbers differ from Activity Monitor or Task Manager</summary>
+<p>Tools count things a little differently; for example, whether cached files count as “used” memory. PC Specs lists Apps, Wired, Compressed, Cached files and Free separately on the Memory page so you can compare with other tools. Anything the system does not provide is labelled as such, never invented.</p></details>
+
+<details><summary>How do I use the full edition's local HTTP API?</summary>
+<p>By default the full edition serves a read-only data API on this machine at <code>127.0.0.1:16089</code>, for your own scripts and dashboards. The data endpoints use POST, with JSON requests and responses. The reference is in <a href="https://github.com/xwzy/pc-specs/blob/main/docs/api.md">docs/api.md</a>. You can turn it off in Settings, or choose “Allow LAN access” (only on networks you trust). The Mac App Store edition has no such API.</p></details>
+
+<details><summary>Which languages and themes are available?</summary>
+<p>Simplified Chinese and English; switch under Settings → Language and every page updates immediately. Settings → Theme offers Dark, Light or Follow system.</p></details>
+
+<details><summary>Source code and license</summary>
+<p>PC Specs is open source under the MIT license: <a href="https://github.com/xwzy/pc-specs">github.com/xwzy/pc-specs</a>.</p></details>
+</div></main>
+
+<footer class="site"><div class="wrap">
+  <span>© 2026 xwzy. All rights reserved.</span>
+  <span><a href="support.html">Support</a> · <a href="privacy.html">Privacy Policy</a></span>
+</div></footer>
+</body>
+</html>

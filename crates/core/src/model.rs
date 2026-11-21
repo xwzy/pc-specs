@@ -56,6 +56,9 @@ pub struct HostInfo {
     pub uptime_secs: u64,
     pub boot_time: u64,
     pub app_version: String,
+    /// 发行版：`full`（自行发布的全功能版）或 `appstore`（Mac App Store 版），见 `edition::NAME`。
+    #[serde(default)]
+    pub edition: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -10,11 +10,29 @@ authors.workspace = true
 [lib]
 name = "pc_specs_core"
 
+# 同一份代码编出两个版本（详见 `src/edition.rs`）：
+# - `full`（默认）：自行发布的全功能版。
+# - `appstore`：Mac App Store 版——App Sandbox 里只用公开接口，所以不含传感器（私有 HID / SMC）、
+#   进程列表、本地 HTTP 服务、联网功能（也就没有 rustls）。构建方式：
+#   `cargo build --release --no-default-features --features appstore`。
+[features]
+default = ["full"]
+full = [
+    "sysinfo/component",
+    "dep:ureq",
+    "dep:tokio",
+    "dep:axum",
+    "dep:tower-http",
+    "dep:plist",
+]
+appstore = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# 跨平台 CPU / 内存 / 磁盘（含 IO）/ 网卡 / 传感器 / GPU（含实时占用与显存）。
-sysinfo = { version = "0.40", default-features = false, features = ["system", "disk", "network", "component", "gpu"] }
+# 跨平台 CPU / 内存 / 磁盘（含 IO）/ 网卡 / GPU（含实时占用与显存）；传感器（`component`）只在全功能版里开：
+# 它在 Apple 芯片上走私有的 IOHIDEventSystem 接口，商店版不能带。
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk", "network", "gpu"] }
 os_info = "3"
 whoami = "2"
 sys-locale = "0.3"
@@ -28,17 +46,24 @@ tracing = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # 网络延迟探测：连接前要先把套接字绑到指定的物理网卡上，标准库做不到。
 socket2 = { version = "0.6", features = ["all"] }
-# 查询公网 IP 的 HTTPS 客户端（rustls，不依赖系统 OpenSSL）。
-ureq = { version = "3", default-features = false, features = ["rustls"] }
-# 本地 HTTP 采集服务（局域网拉取本机指标）。只开必要 features 控制体积。
-tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "matched-path"] }
-tower-http = { version = "0.7", default-features = false, features = ["cors", "limit", "timeout"] }
-# 启动项管理：读 macOS 的 launchd 配置（XML 和二进制 plist 都认）。
-plist = "1"
+# 查询公网 IP / 推送 Webhook 的 HTTPS 客户端（rustls，不依赖系统 OpenSSL）。全功能版才有。
+ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
+# 本地 HTTP 采集服务（局域网拉取本机指标）。只开必要 features 控制体积。全功能版才有。
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"], optional = true }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "matched-path"], optional = true }
+tower-http = { version = "0.7", default-features = false, features = ["cors", "limit", "timeout"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# 启动项管理 / 应用管理：读 macOS 的 launchd 配置和 Info.plist（XML 和二进制 plist 都认）。只有 macOS 的全功能版用到。
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = { version = "1", optional = true }
+
+# 解析这些 plist 的代码在所有系统的测试里都会编译（用样例文件测试），所以测试要有它；
+# 平时的构建在 Windows / Linux 上不需要，不放进 [dependencies]，免得新版 cargo 报「未使用的依赖」。
+[dev-dependencies]
+plist = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.18"

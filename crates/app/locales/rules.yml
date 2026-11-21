@@ -8,6 +8,9 @@ nav_group_tools:
 rules_description:
   en: "Do something when a reading crosses a line: notify you, ping a webhook or run a command."
   zh-CN: "当某个读数越过设定的线时：发通知、推送 Webhook，或者运行一条命令。"
+rules_description_store:
+  en: "Get a notification when a reading crosses a line."
+  zh-CN: "当某个读数越过设定的线时，发一条通知。"
 rules_add:
   en: "Add rule"
   zh-CN: "添加规则"

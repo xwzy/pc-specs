@@ -24,6 +24,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Window, canvas, div, prelude::FluentBuilder as _,
     px, relative, rems, transparent_black,
 };
+use pc_specs_core::edition;
 use pc_specs_core::space::{self, Category, Kind};
 use rust_i18n::t;
 use std::cmp::Reverse;
@@ -232,22 +233,29 @@ fn idle(page: &StoragePage, unit: SizeUnit, cx: &mut Context<StoragePage>) -> Ve
             colors,
             move |cx| {
                 let target = target.clone();
-                page.update(cx, |page, cx| page.start(target, cx));
+                page.update(cx, |page, cx| page.analyze_volume(target, cx));
             },
             cx,
         ));
     }
 
-    // 最近扫过的文件夹（已经不在了的不列）。
+    // 最近扫过的文件夹。普通版把已经不在了的略过；沙盒版没有书签就点不开，也不列
+    // （书签在 `remember` 里存，路径此刻读不了，没法用 `is_dir` 判断）。
     let mut recent = Vec::new();
-    let remembered = page.app.read(cx).settings.storage_recent.clone();
+    let settings = &page.app.read(cx).settings;
+    let remembered: Vec<String> = settings
+        .storage_recent
+        .iter()
+        .filter(|path| !edition::SANDBOXED || settings.storage_bookmarks.contains_key(*path))
+        .cloned()
+        .collect();
     for (i, path) in remembered.iter().map(PathBuf::from).enumerate() {
-        if !path.is_dir() {
+        if !edition::SANDBOXED && !path.is_dir() {
             continue;
         }
         let detail = path.display().to_string();
-        let target = super::folder_target(path);
-        let (title, entity) = (target.label.clone(), entity.clone());
+        let title = super::folder_target(path.clone()).label;
+        let entity = entity.clone();
         recent.push(tile(
             format!("sa-recent-{i}"),
             IconName::Clock,
@@ -257,28 +265,34 @@ fn idle(page: &StoragePage, unit: SizeUnit, cx: &mut Context<StoragePage>) -> Ve
             unit,
             colors,
             move |cx| {
-                let target = target.clone();
-                entity.update(cx, |page, cx| page.start(target, cx));
+                let path = path.clone();
+                entity.update(cx, |page, cx| page.open_recent(path, cx));
             },
             cx,
         ));
     }
 
+    // 个人文件夹和「下载」是普通版的快捷入口；沙盒里它们读不了（`dirs` 给的是应用自己的容器），
+    // 要进去只能走下面的「选择文件夹」。
     let mut folders = Vec::new();
-    let quick = [
-        (
-            "home",
-            IconName::House,
-            t!("sa_target_home").into_owned(),
-            dirs::home_dir(),
-        ),
-        (
-            "downloads",
-            IconName::Download,
-            t!("sa_target_downloads").into_owned(),
-            dirs::download_dir(),
-        ),
-    ];
+    let quick: Vec<_> = if edition::SANDBOXED {
+        Vec::new()
+    } else {
+        vec![
+            (
+                "home",
+                IconName::House,
+                t!("sa_target_home").into_owned(),
+                dirs::home_dir(),
+            ),
+            (
+                "downloads",
+                IconName::Download,
+                t!("sa_target_downloads").into_owned(),
+                dirs::download_dir(),
+            ),
+        ]
+    };
     for (id, icon, title, path) in quick {
         let Some(path) = path.filter(|p| p.is_dir()) else {
             continue;
@@ -307,7 +321,11 @@ fn idle(page: &StoragePage, unit: SizeUnit, cx: &mut Context<StoragePage>) -> Ve
         "sa-folder-choose".into(),
         IconName::FolderSearch,
         t!("sa_target_choose").into_owned(),
-        t!("sa_target_choose_desc").into_owned(),
+        if edition::SANDBOXED {
+            t!("sa_target_choose_desc_store").into_owned()
+        } else {
+            t!("sa_target_choose_desc").into_owned()
+        },
         None,
         unit,
         colors,
@@ -315,7 +333,12 @@ fn idle(page: &StoragePage, unit: SizeUnit, cx: &mut Context<StoragePage>) -> Ve
         cx,
     ));
 
-    let mut body = vec![ui::muted(t!("sa_idle_desc").into_owned(), cx).into_any_element()];
+    let intro = if edition::SANDBOXED {
+        t!("sa_idle_desc_store").into_owned()
+    } else {
+        t!("sa_idle_desc").into_owned()
+    };
+    let mut body = vec![ui::muted(intro, cx).into_any_element()];
     if !disks.is_empty() {
         body.push(
             ui::section("sa-disks", t!("sa_section_disks").into_owned())

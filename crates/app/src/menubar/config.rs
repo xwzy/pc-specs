@@ -75,11 +75,23 @@ impl Metric {
         }
     }
 
+    /// 当前版本有没有这个指标：商店版读不到温度（见 `pc_specs_core::edition`），菜单栏上不提供。
+    pub fn available(self) -> bool {
+        match self {
+            Self::Temperature => pc_specs_core::edition::SENSORS,
+            _ => true,
+        }
+    }
+
     pub fn needs_processes(self) -> bool {
         match self {
-            Self::Cpu | Self::Memory | Self::Storage => true,
+            // 面板里的「占用最多的进程」要枚举进程，商店版的沙盒里做不到。
+            Self::Cpu | Self::Memory | Self::Storage => pc_specs_core::edition::PROCESS_LIST,
             // 网络面板要按进程排流量；系统不支持就没有进程可排，也就不用采样。
-            Self::Network => pc_specs_core::process_net::SUPPORTED,
+            // 商店版的沙盒里量得到流量、却认不出是哪个进程，榜单只会是空的，干脆不列。
+            Self::Network => {
+                pc_specs_core::edition::PROCESS_LIST && pc_specs_core::process_net::SUPPORTED
+            }
             _ => false,
         }
     }
@@ -250,6 +262,7 @@ impl Default for MenuBarSettings {
             process_rows: 8,
             items: Metric::ALL
                 .into_iter()
+                .filter(|metric| metric.available())
                 .map(|metric| MenuBarItem {
                     metric,
                     enabled: !matches!(metric, Metric::Gpu | Metric::Battery),
@@ -264,7 +277,8 @@ impl Default for MenuBarSettings {
 impl MenuBarSettings {
     pub fn normalize(&mut self) {
         let mut seen = std::collections::HashSet::new();
-        self.items.retain(|item| seen.insert(item.metric));
+        self.items
+            .retain(|item| item.metric.available() && seen.insert(item.metric));
         for item in Self::default().items {
             if seen.insert(item.metric) {
                 self.items.push(item);
@@ -342,7 +356,10 @@ mod tests {
     fn partial_config_preserves_order_and_restores_new_metrics() {
         let mut config: MenuBarSettings = serde_json::from_str(r#"{"items":[{"metric":"memory","enabled":false},{"metric":"cpu"},{"metric":"memory"}],"refresh_ms":0,"process_rows":999}"#).unwrap();
         config.normalize();
-        assert_eq!(config.items.len(), 7);
+        assert_eq!(
+            config.items.len(),
+            Metric::ALL.iter().filter(|m| m.available()).count()
+        );
         assert_eq!(config.items[0].metric, Metric::Memory);
         assert!(!config.items[0].enabled);
         assert_eq!(config.items[1].metric, Metric::Cpu);

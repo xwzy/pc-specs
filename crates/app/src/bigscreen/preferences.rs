@@ -624,17 +624,20 @@ fn layout_section(state: &Entity<AppState>, cfg: &BigScreenSettings, cx: &App) -
                 |c, v| c.per_core = v,
                 cx,
             ))
-            .child(choice(
-                state,
-                "bs-rank",
-                t!("bs_rank").into_owned(),
-                vec![
-                    (Rank::Cpu, t!("bs_rank_cpu").into_owned()),
-                    (Rank::Memory, t!("bs_rank_memory").into_owned()),
-                ],
-                cfg.rank,
-                |c, v| c.rank = v,
-            ))
+            // 进程组件的排序方式；商店版没有进程组件（见 `edition::PROCESS_LIST`）。
+            .when(pc_specs_core::edition::PROCESS_LIST, |this| {
+                this.child(choice(
+                    state,
+                    "bs-rank",
+                    t!("bs_rank").into_owned(),
+                    vec![
+                        (Rank::Cpu, t!("bs_rank_cpu").into_owned()),
+                        (Rank::Memory, t!("bs_rank_memory").into_owned()),
+                    ],
+                    cfg.rank,
+                    |c, v| c.rank = v,
+                ))
+            })
             .child(
                 v_flex()
                     .gap_1()

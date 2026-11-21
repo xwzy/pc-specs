@@ -3,6 +3,7 @@
 //! 文件位置：`<config_dir>/pc-specs/settings.json`。读取失败（不存在 / 损坏 / 字段缺失）
 //! 一律回落到默认值，保证设置文件永远不会成为启动失败的原因。
 
+use pc_specs_core::edition;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -124,6 +125,9 @@ pub struct Settings {
     pub tips_dismissed: bool,
     /// 存储空间分析最近扫描过的文件夹，最近的在前（整块磁盘不记，它们一直列在页面上）。
     pub storage_recent: Vec<String>,
+    /// 沙盒（商店版）里重启之后还能再打开这些文件夹的凭证：文件夹路径 → 安全作用域书签。
+    /// 只对这台电脑、这份安装有效，所以不导出、导入时也保留本机的（见 `bookmarks`）。
+    pub storage_bookmarks: std::collections::HashMap<String, String>,
     pub window: Option<WindowState>,
 }
 
@@ -151,11 +155,14 @@ impl Default for Settings {
             rules: crate::rules::defaults(),
             webhook_url: String::new(),
             webhook_format: Default::default(),
-            server_enabled: true,
-            // 与旧版保持一致：默认监听所有网卡，便于其他机器拉取指标。
-            server_lan: true,
+            server_enabled: edition::LOCAL_SERVER,
+            // 默认只监听本机：接口没有鉴权，网卡 MAC、磁盘序列号这些分段数据也不遮蔽，
+            // 要让局域网里的其他机器来拉，需要用户在设置里主动打开。
+            // （已经保存过设置的老用户，文件里记着他们当时的选择，不受影响。）
+            server_lan: false,
             tips_dismissed: false,
             storage_recent: Vec::new(),
+            storage_bookmarks: Default::default(),
             window: None,
         }
     }
@@ -202,6 +209,7 @@ impl Settings {
         let mut portable = self.clone();
         portable.window = None;
         portable.floating_pos = None;
+        portable.storage_bookmarks.clear();
         serde_json::to_string_pretty(&portable)
     }
 
@@ -241,6 +249,11 @@ impl Settings {
         incoming.server_lan = self.server_lan;
         incoming.window = self.window;
         incoming.floating_pos = self.floating_pos;
+        // 书签是这台电脑上、这份安装自己的授权；沙盒里没有书签的文件夹点不开，最近列表也跟着本机走。
+        incoming.storage_bookmarks = self.storage_bookmarks.clone();
+        if edition::SANDBOXED {
+            incoming.storage_recent = self.storage_recent.clone();
+        }
         Ok((incoming, dropped))
     }
 
@@ -292,12 +305,15 @@ mod tests {
             theme: ThemePref::Dark,
             window: Some(window(100.0)),
             floating_pos: Some((5.0, 6.0)),
+            storage_bookmarks: [("/a".to_string(), "00ff".to_string())].into(),
             ..Settings::default()
         };
         let json = settings.to_portable_json().unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.theme, ThemePref::Dark);
         assert_eq!((back.window, back.floating_pos), (None, None));
+        // 书签只对这台电脑有效，带到别处没有用，也不该带出去。
+        assert!(back.storage_bookmarks.is_empty());
     }
 
     #[test]
@@ -307,6 +323,7 @@ mod tests {
             floating_pos: Some((1.0, 2.0)),
             server_enabled: false,
             server_lan: false,
+            storage_bookmarks: [("/here".to_string(), "aa".to_string())].into(),
             ..Settings::default()
         };
 
@@ -320,6 +337,7 @@ mod tests {
             server_lan: true,
             window: Some(window(900.0)),
             rules: vec![risky, quiet],
+            storage_bookmarks: [("/there".to_string(), "bb".to_string())].into(),
             ..Settings::default()
         };
 
@@ -331,12 +349,17 @@ mod tests {
             (imported.theme, imported.interval_ms),
             (ThemePref::Dark, 2000)
         );
-        // 规则过来了，但命令没有；本机的接口服务开关和窗口位置原样保留。
-        assert_eq!((imported.rules.len(), dropped), (2, 1));
+        // 规则过来了，但命令没有（商店版没有命令这回事，也就没有「被丢掉」的）；
+        // 本机的接口服务开关和窗口位置原样保留。
+        assert_eq!(
+            (imported.rules.len(), dropped),
+            (2, usize::from(edition::RUN_COMMANDS))
+        );
         assert!(imported.rules.iter().all(|rule| !rule.has_command()));
         assert!(!imported.server_enabled && !imported.server_lan);
         assert_eq!(imported.window, here.window);
         assert_eq!(imported.floating_pos, here.floating_pos);
+        assert_eq!(imported.storage_bookmarks, here.storage_bookmarks);
     }
 
     #[test]

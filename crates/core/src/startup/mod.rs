@@ -7,7 +7,8 @@
 #[cfg(any(target_os = "linux", test))]
 mod xdg;
 
-#[cfg(any(target_os = "macos", test))]
+// 商店版不带启动项管理：它要读写 launchd 的配置和别的应用的登录项，沙盒不允许。
+#[cfg(all(any(target_os = "macos", test), not(feature = "appstore")))]
 mod launchd;
 
 #[cfg(any(windows, test))]
@@ -16,13 +17,17 @@ mod registry;
 use std::path::PathBuf;
 
 // 各系统的实现统一成 `platform::list` / `platform::set_enabled`。
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "appstore")))]
 use launchd as platform;
 #[cfg(windows)]
 use registry as platform;
 #[cfg(target_os = "linux")]
 use xdg as platform;
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+#[cfg(not(any(
+    all(target_os = "macos", not(feature = "appstore")),
+    windows,
+    target_os = "linux"
+)))]
 mod platform {
     pub fn list() -> super::Listing {
         super::Listing::default()
@@ -83,6 +88,7 @@ pub struct Entry {
     /// 配置文件（或它跑的程序）的位置，可以在文件管理器里显示。
     pub path: Option<PathBuf>,
     /// 开关它要用到的标识：launchd 的 Label、注册表的值名、登录项的应用路径、.desktop 的文件名……
+    #[cfg_attr(feature = "appstore", allow(dead_code))]
     key: String,
 }
 

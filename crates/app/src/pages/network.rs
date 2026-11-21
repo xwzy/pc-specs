@@ -14,6 +14,7 @@ use gpui_kit::{
     AnyElement, App, Entity, IntoElement as _, ParentElement as _, SharedString, Styled as _, div,
     prelude::FluentBuilder as _, px, relative, rems,
 };
+use pc_specs_core::edition;
 use pc_specs_core::model::NetworkInterface;
 use pc_specs_core::netprobe::{self, TargetKind, WifiInfo};
 use rust_i18n::t;
@@ -59,30 +60,12 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
     }
     let subtitle = (!parts.is_empty()).then(|| SharedString::from(parts.join(" · ")));
 
-    // ---- 公网 IP：只在用户点击时才发起查询 ----
-    let loading = s.public_ip == LookupState::Loading;
-    let known_ip = match &s.public_ip {
-        LookupState::Done(ip) => ip.clone(),
-        _ => net.public_ip.clone(),
-    };
-    let label = if loading {
-        t!("net_query_loading").into_owned()
-    } else if let Some(ip) = known_ip {
-        format!("{} {}", t!("net_public_prefix"), ip)
+    // ---- 公网 IP：只在用户点击时才发起查询；商店版不联网，没有这个按钮 ----
+    let actions = if edition::NETWORK_ACCESS {
+        vec![public_ip_button(s, state)]
     } else {
-        t!("net_query_public").into_owned()
+        Vec::new()
     };
-    let fetch_state = state.clone();
-    let ip_button = Button::new("net-public-ip")
-        .small()
-        .outline()
-        .icon(IconName::Globe)
-        .label(label)
-        .loading(loading)
-        .on_click(move |_, _, cx| {
-            fetch_state.update(cx, |s, cx| s.fetch_public_ip(cx));
-        })
-        .into_any_element();
 
     // ---- 吞吐图 ----
     let points = chart::series2(s, Some(180), move |t| {
@@ -268,7 +251,11 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
             .into_any_element()
     };
 
-    let mut body = vec![throughput.into_any_element(), connection(s, cx)];
+    let mut body = vec![throughput.into_any_element()];
+    // 到路由器 / DNS / 公网的延迟要向网络发包，商店版不做，这张卡也就没有。
+    if edition::NETWORK_ACCESS {
+        body.push(connection(s, cx));
+    }
     if let Some(info) = &s.wifi {
         body.push(wifi(info, cx));
     }
@@ -282,10 +269,37 @@ pub fn render(s: &AppState, state: &Entity<AppState>, cx: &App) -> AnyElement {
         "page-network",
         t!("nav_network").into_owned(),
         subtitle,
-        vec![ip_button],
+        actions,
         body,
         cx,
     )
+}
+
+/// 顶栏右上角的按钮：点一下查公网 IP，查到了就显示出来。
+fn public_ip_button(s: &AppState, state: &Entity<AppState>) -> AnyElement {
+    let loading = s.public_ip == LookupState::Loading;
+    let known_ip = match &s.public_ip {
+        LookupState::Done(ip) => ip.clone(),
+        _ => s.snapshot.network.public_ip.clone(),
+    };
+    let label = if loading {
+        t!("net_query_loading").into_owned()
+    } else if let Some(ip) = known_ip {
+        format!("{} {}", t!("net_public_prefix"), ip)
+    } else {
+        t!("net_query_public").into_owned()
+    };
+    let fetch_state = state.clone();
+    Button::new("net-public-ip")
+        .small()
+        .outline()
+        .icon(IconName::Globe)
+        .label(label)
+        .loading(loading)
+        .on_click(move |_, _, cx| {
+            fetch_state.update(cx, |s, cx| s.fetch_public_ip(cx));
+        })
+        .into_any_element()
 }
 
 fn target_name(kind: TargetKind) -> String {

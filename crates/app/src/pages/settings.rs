@@ -11,6 +11,7 @@ use gpui_kit::{
     AnyElement, App, Entity, IntoElement as _, ParentElement as _, Styled as _, div,
     prelude::FluentBuilder as _, rems,
 };
+use pc_specs_core::edition;
 use pc_specs_core::server::{self, ServerStatus};
 use rust_i18n::t;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -159,7 +160,14 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
             ))
             .child(row(
                 t!("settings_alerts").into_owned(),
-                Some(t!("settings_alerts_hint").into_owned()),
+                Some(
+                    if edition::APP_STORE {
+                        t!("settings_alerts_hint_store")
+                    } else {
+                        t!("settings_alerts_hint")
+                    }
+                    .into_owned(),
+                ),
                 toggle(state, "settings-alerts", settings.alerts, |v, on| {
                     v.alerts = on
                 }),
@@ -248,64 +256,67 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
         LookupState::Done(ip) => ip.clone(),
         _ => s.snapshot.network.public_ip.clone(),
     };
-    let network = ui::section("settings-network", t!("settings_page_network").into_owned()).child(
-        v_flex()
-            .gap_4()
-            .child(row(
-                t!("settings_server").into_owned(),
-                Some(t!("settings_server_hint").into_owned()),
-                toggle(
-                    state,
-                    "settings-server",
-                    settings.server_enabled,
-                    |v, on| v.server_enabled = on,
-                ),
-                cx,
-            ))
-            .when(settings.server_enabled, |this| {
-                this.child(row(
-                    t!("settings_server_lan").into_owned(),
-                    Some(t!("settings_server_lan_hint").into_owned()),
+    // 本地接口和公网 IP 都在商店版里没有（见 `edition`），整个小节不摆。
+    let network = (edition::LOCAL_SERVER || edition::NETWORK_ACCESS).then(|| {
+        ui::section("settings-network", t!("settings_page_network").into_owned()).child(
+            v_flex()
+                .gap_4()
+                .child(row(
+                    t!("settings_server").into_owned(),
+                    Some(t!("settings_server_hint").into_owned()),
                     toggle(
                         state,
-                        "settings-server-lan",
-                        settings.server_lan,
-                        |v, on| v.server_lan = on,
+                        "settings-server",
+                        settings.server_enabled,
+                        |v, on| v.server_enabled = on,
                     ),
                     cx,
                 ))
-                .child(status)
-            })
-            .child(row(
-                t!("net_query_public").into_owned(),
-                Some(t!("settings_public_ip_hint").into_owned()),
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .when_some(known_ip, |this, ip| this.child(div().text_sm().child(ip)))
-                    .child(
-                        Button::new("settings-ip-fetch")
-                            .small()
-                            .outline()
-                            .label(t!("settings_public_ip_fetch").into_owned())
-                            .loading(fetching)
-                            .on_click(move |_, _, cx| {
-                                ip_state.update(cx, |s, cx| s.fetch_public_ip(cx));
-                            }),
-                    )
-                    .child(
-                        Button::new("settings-ip-clear")
-                            .small()
-                            .ghost()
-                            .label(t!("settings_public_ip_clear").into_owned())
-                            .on_click(move |_, _, cx| {
-                                clear_state.update(cx, |s, cx| s.clear_public_ip(cx));
-                            }),
-                    )
-                    .into_any_element(),
-                cx,
-            )),
-    );
+                .when(settings.server_enabled, |this| {
+                    this.child(row(
+                        t!("settings_server_lan").into_owned(),
+                        Some(t!("settings_server_lan_hint").into_owned()),
+                        toggle(
+                            state,
+                            "settings-server-lan",
+                            settings.server_lan,
+                            |v, on| v.server_lan = on,
+                        ),
+                        cx,
+                    ))
+                    .child(status)
+                })
+                .child(row(
+                    t!("net_query_public").into_owned(),
+                    Some(t!("settings_public_ip_hint").into_owned()),
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .when_some(known_ip, |this, ip| this.child(div().text_sm().child(ip)))
+                        .child(
+                            Button::new("settings-ip-fetch")
+                                .small()
+                                .outline()
+                                .label(t!("settings_public_ip_fetch").into_owned())
+                                .loading(fetching)
+                                .on_click(move |_, _, cx| {
+                                    ip_state.update(cx, |s, cx| s.fetch_public_ip(cx));
+                                }),
+                        )
+                        .child(
+                            Button::new("settings-ip-clear")
+                                .small()
+                                .ghost()
+                                .label(t!("settings_public_ip_clear").into_owned())
+                                .on_click(move |_, _, cx| {
+                                    clear_state.update(cx, |s, cx| s.clear_public_ip(cx));
+                                }),
+                        )
+                        .into_any_element(),
+                    cx,
+                )),
+        )
+    });
 
     // ---- 导出 ----
     let export = ui::section(
@@ -331,7 +342,14 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
     )
     .child(row(
         t!("settings_backup_title").into_owned(),
-        Some(t!("settings_backup_desc").into_owned()),
+        Some(
+            if edition::APP_STORE {
+                t!("settings_backup_desc_store")
+            } else {
+                t!("settings_backup_desc")
+            }
+            .into_owned(),
+        ),
         {
             let (export_state, import_state) = (state.clone(), state.clone());
             h_flex()
@@ -360,6 +378,7 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
     ));
 
     // ---- 关于 ----
+    let zh = settings.language.code() == "zh-CN";
     let config_path = Settings::path();
     let reveal = config_path.clone().map(|path| {
         Button::new("settings-reveal")
@@ -380,6 +399,15 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
                         env!("CARGO_PKG_VERSION").to_string(),
                     ),
                     (
+                        t!("settings_about_edition").into_owned(),
+                        if edition::APP_STORE {
+                            t!("settings_about_edition_store")
+                        } else {
+                            t!("settings_about_edition_full")
+                        }
+                        .into_owned(),
+                    ),
+                    (
                         t!("settings_about_platform").into_owned(),
                         format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
                     ),
@@ -392,26 +420,63 @@ pub fn render(state: &Entity<AppState>, cx: &App) -> AnyElement {
                 ],
                 cx,
             ))
-            .when_some(reveal, |this, button| this.child(h_flex().child(button)))
-            .child(ui::muted(t!("settings_about_privacy").into_owned(), cx).text_xs()),
+            .child(
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .children(reveal)
+                    .child(
+                        Button::new("settings-privacy")
+                            .small()
+                            .outline()
+                            .icon(IconName::ExternalLink)
+                            .label(t!("settings_about_privacy_policy").into_owned())
+                            .on_click(move |_, _, cx| cx.open_url(&crate::links::privacy(zh))),
+                    )
+                    .child(
+                        Button::new("settings-support")
+                            .small()
+                            .outline()
+                            .icon(IconName::ExternalLink)
+                            .label(t!("settings_about_support").into_owned())
+                            .on_click(move |_, _, cx| cx.open_url(&crate::links::support(zh))),
+                    ),
+            )
+            .child(
+                ui::muted(
+                    if edition::APP_STORE {
+                        t!("settings_about_privacy_store")
+                    } else {
+                        t!("settings_about_privacy")
+                    }
+                    .into_owned(),
+                    cx,
+                )
+                .text_xs(),
+            ),
     );
 
+    let mut sections = vec![
+        appearance.into_any_element(),
+        units.into_any_element(),
+        monitor.into_any_element(),
+        tray.into_any_element(),
+        floating.into_any_element(),
+    ];
+    if let Some(network) = network {
+        sections.push(network.into_any_element());
+    }
+    sections.extend([
+        export.into_any_element(),
+        backup.into_any_element(),
+        about.into_any_element(),
+    ]);
     ui::page(
         "page-settings",
         t!("settings_title").into_owned(),
         Some(t!("settings_desc").into_owned().into()),
         vec![],
-        vec![
-            appearance.into_any_element(),
-            units.into_any_element(),
-            monitor.into_any_element(),
-            tray.into_any_element(),
-            floating.into_any_element(),
-            network.into_any_element(),
-            export.into_any_element(),
-            backup.into_any_element(),
-            about.into_any_element(),
-        ],
+        sections,
         cx,
     )
 }

@@ -23,6 +23,7 @@ use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, ClipboardItem, Context, Entity, Global,
     PathPromptOptions, SharedString, SystemNotification,
 };
+use pc_specs_core::edition;
 use pc_specs_core::exporter;
 use pc_specs_core::model::{GpuInfo, MonitorTick, ProcessInfo, SystemSnapshot};
 use pc_specs_core::modules::{self, Module, ModuleData};
@@ -79,6 +80,18 @@ impl Page {
         Page::Sensors,
         Page::Peripherals,
     ];
+
+    /// 当前版本有没有这一页：商店版没有传感器、进程、编程环境、应用管理和启动项（见 `edition`），
+    /// 它们不摆进导航，也进不去。
+    pub fn available(self) -> bool {
+        match self {
+            Page::Sensors => edition::SENSORS,
+            Page::Processes => edition::PROCESS_LIST,
+            Page::DevEnv | Page::Startup => edition::SYSTEM_MANAGEMENT,
+            Page::Apps => pc_specs_core::apps::SUPPORTED,
+            _ => true,
+        }
+    }
 
     pub fn key(self) -> &'static str {
         match self {
@@ -330,7 +343,8 @@ struct ProbeConfig {
 
 /// 探测线程送回来的一帧。
 struct NetFrame {
-    sample: LatencySample,
+    /// 商店版不量延迟（见 `edition::NETWORK_ACCESS`），没有这一项。
+    sample: Option<LatencySample>,
     /// 这一帧读了 Wi-Fi 才有：里面的 `None` 是没连 Wi-Fi。
     wifi: Option<Option<WifiInfo>>,
 }
@@ -596,7 +610,8 @@ impl AppState {
         match text.and_then(|text| self.settings.imported(&text)) {
             Ok((settings, dropped)) => {
                 self.update_settings(|current| *current = settings, cx);
-                let message = if dropped == 0 {
+                // 商店版里本来就没有规则命令，没有什么「被丢掉」可说。
+                let message = if dropped == 0 || !edition::RUN_COMMANDS {
                     t!("settings_import_done").into_owned()
                 } else {
                     t!("settings_import_done_commands", n = dropped).into_owned()
@@ -633,7 +648,7 @@ impl AppState {
     // ---- 页面 -----------------------------------------------------------
 
     pub fn set_page(&mut self, page: Page, cx: &mut Context<Self>) {
-        if self.page == page {
+        if self.page == page || !page.available() {
             return;
         }
         self.page = page;
@@ -805,7 +820,7 @@ impl AppState {
     }
 
     pub fn fetch_public_ip(&mut self, cx: &mut Context<Self>) {
-        if self.public_ip == LookupState::Loading {
+        if !edition::NETWORK_ACCESS || self.public_ip == LookupState::Loading {
             return;
         }
         self.public_ip = LookupState::Loading;
@@ -1031,7 +1046,7 @@ impl AppState {
             self.notify_alert(message.clone(), cx);
         }
         let url = self.settings.webhook_url.trim().to_string();
-        if rule.webhook && !url.is_empty() {
+        if edition::NETWORK_ACCESS && rule.webhook && !url.is_empty() {
             let body = rules::webhook_body(
                 self.settings.webhook_format,
                 firing,
@@ -1042,7 +1057,7 @@ impl AppState {
             );
             self.send_webhook(url, body, !log, cx);
         }
-        if rule.has_command() {
+        if edition::RUN_COMMANDS && rule.has_command() {
             self.run_rule_command(firing, &summary, &message, &host, !log, cx);
         }
         if log {
@@ -1234,7 +1249,8 @@ impl AppState {
 
     /// 有没有人要看每个进程的网络流量：只有菜单栏里打开的「网络」面板用得上。
     fn process_net_wanted(&self) -> bool {
-        pc_specs_core::process_net::SUPPORTED
+        edition::PROCESS_LIST
+            && pc_specs_core::process_net::SUPPORTED
             && self.detail_window.is_some()
             && self.detail_metric == Some(crate::menubar::config::Metric::Network)
     }
@@ -1321,7 +1337,9 @@ impl AppState {
         let on_page = self.page == Page::Network && self.main_window.is_some();
         let on_panel = self.detail_window.is_some()
             && self.detail_metric == Some(crate::menubar::config::Metric::Network);
-        if !(on_page || on_panel || rules::needs_network_probe(&self.settings)) {
+        // 商店版不联网，不量延迟，只读 Wi-Fi 详情，所以只有看得见读数时才需要探测线程。
+        let probing = edition::NETWORK_ACCESS && rules::needs_network_probe(&self.settings);
+        if !(on_page || on_panel || probing) {
             return None;
         }
         let network = &self.snapshot.network;
@@ -1378,7 +1396,11 @@ impl AppState {
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (tx, rx) = async_channel::bounded::<NetFrame>(2);
         let started = spawn_thread("pc-specs-netprobe", move || {
-            let targets = netprobe::targets(config.gateway.as_deref(), &config.dns);
+            let targets = if edition::NETWORK_ACCESS {
+                netprobe::targets(config.gateway.as_deref(), &config.dns)
+            } else {
+                Vec::new()
+            };
             let mut wifi_due = Instant::now();
             loop {
                 let began = Instant::now();
@@ -1388,12 +1410,14 @@ impl AppState {
                     let interface = config
                         .gateway
                         .as_deref()
+                        .filter(|_| edition::NETWORK_ACCESS)
                         .and_then(netprobe::gateway_interface);
                     // Wi-Fi 详情要起外部命令，和延迟同时量，别让它拖慢这一轮。
                     std::thread::scope(|scope| {
                         let wifi = read_wifi.then(|| scope.spawn(|| netprobe::wifi(&config.wifi)));
-                        let sample =
-                            netprobe::measure(&targets, interface, pc_specs_core::util::now_ms());
+                        let sample = edition::NETWORK_ACCESS.then(|| {
+                            netprobe::measure(&targets, interface, pc_specs_core::util::now_ms())
+                        });
                         NetFrame {
                             sample,
                             wifi: wifi.map(|handle| handle.join().ok().flatten()),
@@ -1448,9 +1472,11 @@ impl AppState {
     }
 
     fn push_net_frame(&mut self, frame: NetFrame) {
-        self.latency.push_back(frame.sample);
-        while self.latency.len() > LATENCY_KEEP {
-            self.latency.pop_front();
+        if let Some(sample) = frame.sample {
+            self.latency.push_back(sample);
+            while self.latency.len() > LATENCY_KEEP {
+                self.latency.pop_front();
+            }
         }
         if let Some(wifi) = frame.wifi {
             self.wifi = wifi;
@@ -1469,7 +1495,7 @@ impl AppState {
         self.server_epoch += 1;
         let epoch = self.server_epoch;
         let old = self.server.take();
-        let enabled = self.settings.server_enabled;
+        let enabled = edition::LOCAL_SERVER && self.settings.server_enabled;
         let ip = if self.settings.server_lan {
             IpAddr::V4(Ipv4Addr::UNSPECIFIED)
         } else {

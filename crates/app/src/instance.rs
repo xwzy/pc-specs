@@ -6,6 +6,7 @@
 //!
 //! 单实例是尽力而为的：锁文件打不开、文件系统不支持锁、叫不醒对方，都照常启动，不拦着用户。
 
+use pc_specs_core::edition;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
@@ -48,11 +49,15 @@ pub fn acquire(wake: async_channel::Sender<()>, wake_existing: bool) -> Option<I
 
     match lock.try_lock() {
         Ok(()) => {
-            listen(&dir, wake);
+            // 沙盒版没有网络权限，用不了回环端口；它也不需要：访达和 Dock 本来就不会给同一个
+            // 应用开第二个进程，点图标是系统发「重新打开」事件，由 `on_reopen` 把窗口叫出来。
+            if !edition::SANDBOXED {
+                listen(&dir, wake);
+            }
             Some(Instance { _lock: Some(lock) })
         }
         Err(TryLockError::WouldBlock) => {
-            if wake_existing && !wake_running(&dir) {
+            if wake_existing && !edition::SANDBOXED && !wake_running(&dir) {
                 tracing::warn!(
                     "another instance holds the lock but didn't answer, starting anyway"
                 );

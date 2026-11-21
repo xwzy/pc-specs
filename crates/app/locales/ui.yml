@@ -627,8 +627,26 @@ settings_about_platform:
   en: "Platform"
   zh-CN: "平台"
 settings_about_privacy:
-  en: "Runs entirely on this device. No network access unless public IP lookup is used."
-  zh-CN: "完全在本机运行；除非使用公网 IP 查询，否则不会联网。"
+  en: "Runs entirely on this device and collects no data. Only these use the network: the latency check on the Network page, public IP lookups you start, webhooks you set up, and the local HTTP API (reachable only from this machine by default)."
+  zh-CN: "完全在本机运行，不收集任何数据。只有这几项会用到网络：网络页的延迟检测、你主动发起的公网 IP 查询、你设置的 Webhook，以及本地 HTTP 接口（默认只对本机开放）。"
+settings_about_privacy_store:
+  en: "Runs entirely on this Mac. The app never connects to the internet and collects no data."
+  zh-CN: "完全在本机运行；应用不会联网，也不收集任何数据。"
+settings_about_privacy_policy:
+  en: "Privacy policy"
+  zh-CN: "隐私政策"
+settings_about_support:
+  en: "Support"
+  zh-CN: "技术支持"
+settings_about_edition:
+  en: "Edition"
+  zh-CN: "版本类型"
+settings_about_edition_store:
+  en: "Mac App Store"
+  zh-CN: "Mac App Store 版"
+settings_about_edition_full:
+  en: "Direct download (full-featured)"
+  zh-CN: "自行发布版（全功能）"
 settings_about_reveal:
   en: "Show in folder"
   zh-CN: "在文件夹中显示"
@@ -641,6 +659,9 @@ settings_alerts:
 settings_alerts_hint:
   en: "Master switch for the rules on the Rules page: notifications, webhooks and commands when a reading crosses a line."
   zh-CN: "「规则」页里所有规则的总开关：读数越线时发通知、推送 Webhook 或运行命令。"
+settings_alerts_hint_store:
+  en: "Master switch for the rules on the Rules page: a notification when a reading crosses a line."
+  zh-CN: "「规则」页里所有规则的总开关：读数越线时发通知。"
 settings_appearance:
   en: "Appearance"
   zh-CN: "外观"
@@ -668,6 +689,9 @@ settings_backup_title:
 settings_backup_desc:
   en: "Save your settings (menu bar, units, rules, big screen…) to a file, or load them from one — handy on a new computer. For safety, rule commands and the local API server switches are not imported."
   zh-CN: "把设置（顶栏、单位、规则、监控大屏……）存成文件，或者从文件读回来，换电脑时很方便。出于安全，规则里的命令和本机接口服务的开关不会被导入。"
+settings_backup_desc_store:
+  en: "Save your settings (menu bar, units, rules, big screen…) to a file, or load them from one — handy on a new computer."
+  zh-CN: "把设置（顶栏、单位、规则、监控大屏……）存成文件，或者从文件读回来，换电脑时很方便。"
 settings_backup_export:
   en: "Export…"
   zh-CN: "导出…"
@@ -747,8 +771,8 @@ settings_server_lan:
   en: "Allow LAN access"
   zh-CN: "允许局域网访问"
 settings_server_lan_hint:
-  en: "Listen on every network interface: any device on the same network can read this machine's hardware info and live metrics (MAC / serial numbers are redacted by default). Only enable it on networks you trust."
-  zh-CN: "监听所有网卡：同一网络里的任何设备都能读取本机的硬件信息和实时指标（默认不含 MAC、序列号等敏感字段），请只在可信的网络里开启。"
+  en: "Listen on every network interface: any device on the same network can read this machine's hardware info and live metrics, including host name, MAC and serial numbers from the per-section endpoints, and there is no authentication. Only enable it on networks you trust."
+  zh-CN: "监听所有网卡：同一网络里的任何设备都能读取本机的硬件信息和实时指标（分段接口会返回主机名、MAC、序列号等），而且没有身份验证。请只在可信的网络里开启。"
 settings_server_listening:
   en: "Listening on %{addr}"
   zh-CN: "正在监听 %{addr}"
@@ -1172,6 +1196,12 @@ theme_switch_dark:
 dash_card_temp:
   en: "Temperature"
   zh-CN: "温度"
+dash_card_thermal:
+  en: "Thermal state"
+  zh-CN: "散热状态"
+dash_thermal_hint:
+  en: "Reported by macOS. Heavy or Critical means performance is being reduced."
+  zh-CN: "由 macOS 给出。「较重」或「严重」说明系统已在压低性能。"
 dash_card_gpu:
   en: "GPU"
   zh-CN: "显卡"
@@ -1322,6 +1352,15 @@ sa_target_choose:
 sa_target_choose_desc:
   en: "Any folder, such as an external drive or a project"
   zh-CN: "任意文件夹，比如外接硬盘或某个项目目录"
+sa_target_choose_desc_store:
+  en: "A whole disk or any folder — you allow access in the next window"
+  zh-CN: "整块磁盘或任意文件夹，在接下来弹出的窗口里授权访问"
+sa_idle_desc_store:
+  en: "Pick a disk or a folder and see it as a treemap: the bigger the block, the more space it takes. PC Specs can only read what you choose here, and only file sizes — nothing is changed."
+  zh-CN: "选一块磁盘或一个文件夹，用矩形树图直观展示：色块越大，占用的空间越多。PC Specs 只能读取你在这里选的位置，而且只读取文件大小，不会改动任何内容。"
+sa_recent_lost:
+  en: "Can't open “%{name}” any more. Choose it again to allow access."
+  zh-CN: "无法再打开“%{name}”，请重新选择它来授权访问。"
 sa_used_of:
   en: "%{used} of %{total} used"
   zh-CN: "已用 %{used} / %{total}"

@@ -11,6 +11,9 @@ dist/
 *.pem
 *.key
 *.mobileprovision
+*.provisionprofile
+*.cer
+*.certSigningRequest
 
 # IDE
 .idea/

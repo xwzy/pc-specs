@@ -78,6 +78,17 @@ impl Metric {
         Metric::ProcessCpu,
     ];
 
+    /// 当前版本有没有这个读数：商店版没有传感器、不联网、列不出进程（见 `pc_specs_core::edition`）。
+    pub fn available(self) -> bool {
+        use pc_specs_core::edition;
+        match self {
+            Metric::Temperature | Metric::FanSpeed => edition::SENSORS,
+            Metric::NetLatency | Metric::Offline => edition::NETWORK_ACCESS,
+            Metric::ProcessCpu => edition::PROCESS_LIST,
+            _ => true,
+        }
+    }
+
     /// 稳定的英文标识，Webhook 的 `metric` 字段和命令的环境变量里用它。
     pub fn key(self) -> &'static str {
         match self {
@@ -311,16 +322,20 @@ pub fn defaults() -> Vec<Rule> {
         cooldown_mins: 5,
         ..Rule::new(id, metric)
     };
-    vec![
+    let mut rules = vec![
         rule(1, Metric::CpuUsage, 95.),
         rule(2, Metric::MemoryUsage, 95.),
         rule(3, Metric::DiskUsage, 95.),
         rule(4, Metric::Temperature, 100.),
-    ]
+    ];
+    rules.retain(|rule| rule.metric.available());
+    rules
 }
 
 /// 手工改坏的规则收敛回合法状态：编号唯一、数值有限、长度有上限。
 pub fn sanitize(rules: &mut Vec<Rule>) {
+    // 当前版本没有的读数（比如商店版的温度）不留规则：留着也永远读不到，只会让人困惑。
+    rules.retain(|rule| rule.metric.available());
     rules.truncate(MAX_RULES);
     let mut taken = HashSet::new();
     let mut next = rules.iter().map(|rule| rule.id).max().unwrap_or(0);
@@ -332,6 +347,13 @@ pub fn sanitize(rules: &mut Vec<Rule>) {
         }
         if !rule.threshold.is_finite() {
             rule.threshold = rule.metric.default_threshold();
+        }
+        // 商店版不联网、不运行外部命令：设置文件或别人导出的设置里带了也不生效，也不留着。
+        if !pc_specs_core::edition::NETWORK_ACCESS {
+            rule.webhook = false;
+        }
+        if !pc_specs_core::edition::RUN_COMMANDS {
+            rule.command.clear();
         }
         rule.for_secs = rule.for_secs.min(86_400);
         // 数值类规则的冷却为 0 会在条件成立期间每个采样都触发一次。
@@ -1106,10 +1128,18 @@ mod tests {
     }
 
     #[test]
-    fn old_settings_without_rules_get_the_four_builtin_alerts() {
+    fn old_settings_without_rules_get_the_builtin_alerts() {
         let settings: Settings = serde_json::from_str(r#"{"alerts":true}"#).unwrap();
         assert_eq!(settings.rules, defaults());
-        assert_eq!(defaults().len(), 4);
+        // 内置四项里有一项是温度；商店版读不了温度，就只有三项。
+        assert_eq!(
+            defaults().len(),
+            if pc_specs_core::edition::SENSORS {
+                4
+            } else {
+                3
+            }
+        );
     }
 
     #[test]

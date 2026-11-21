@@ -156,7 +156,15 @@ impl RulesPage {
         ui::page(
             "page-rules",
             t!("nav_rules").into_owned(),
-            Some(t!("rules_description").into_owned().into()),
+            Some(
+                if pc_specs_core::edition::APP_STORE {
+                    t!("rules_description_store")
+                } else {
+                    t!("rules_description")
+                }
+                .into_owned()
+                .into(),
+            ),
             actions,
             body,
             cx,
@@ -239,31 +247,36 @@ impl RulesPage {
                             )
                             .child(master),
                     )
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_medium()
-                                    .child(t!("rules_webhook").into_owned()),
-                            )
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child(Input::new(&self.webhook).small()),
-                                    )
-                                    .child(test),
-                            )
-                            .child(h_flex().items_center().gap_2().child(formats))
-                            .child(ui::muted(t!("rules_webhook_hint").into_owned(), cx).text_xs()),
-                    ),
+                    // 商店版不联网，没有 Webhook（见 `edition::NETWORK_ACCESS`）。
+                    .when(pc_specs_core::edition::NETWORK_ACCESS, |this| {
+                        this.child(
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_medium()
+                                        .child(t!("rules_webhook").into_owned()),
+                                )
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .child(Input::new(&self.webhook).small()),
+                                        )
+                                        .child(test),
+                                )
+                                .child(h_flex().items_center().gap_2().child(formats))
+                                .child(
+                                    ui::muted(t!("rules_webhook_hint").into_owned(), cx).text_xs(),
+                                ),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -404,7 +417,11 @@ impl RulesPage {
         let metric_pick = dropdown(
             format!("rule-metric-{id}"),
             metric.name(),
-            Metric::ALL.iter().map(|m| (*m, m.name())).collect(),
+            Metric::ALL
+                .iter()
+                .filter(|m| m.available())
+                .map(|m| (*m, m.name()))
+                .collect(),
             metric,
             {
                 let state = self.state.clone();
@@ -549,25 +566,30 @@ impl RulesPage {
                 h_flex().items_center().child(notify),
                 cx,
             ))
-            .child(field(
-                t!("rule_action_webhook").into_owned(),
-                h_flex()
-                    .items_center()
-                    .gap_3()
-                    .child(webhook)
-                    .children(webhook_note),
-                cx,
-            ))
-            .child(field(
-                t!("rule_action_command").into_owned(),
-                Input::new(&self.command).small(),
-                cx,
-            ))
-            .child(
-                div()
-                    .pl(px(150. + 12.))
-                    .child(ui::muted(t!("rule_command_hint").into_owned(), cx).text_xs()),
-            )
+            // 商店版不联网、不运行外部命令，规则只发通知（见 `edition`）。
+            .when(pc_specs_core::edition::NETWORK_ACCESS, |this| {
+                this.child(field(
+                    t!("rule_action_webhook").into_owned(),
+                    h_flex()
+                        .items_center()
+                        .gap_3()
+                        .child(webhook)
+                        .children(webhook_note),
+                    cx,
+                ))
+            })
+            .when(pc_specs_core::edition::RUN_COMMANDS, |this| {
+                this.child(field(
+                    t!("rule_action_command").into_owned(),
+                    Input::new(&self.command).small(),
+                    cx,
+                ))
+                .child(
+                    div()
+                        .pl(px(150. + 12.))
+                        .child(ui::muted(t!("rule_command_hint").into_owned(), cx).text_xs()),
+                )
+            })
             .child(div().pl(px(150. + 12.)).child(try_it))
             .into_any_element()
     }

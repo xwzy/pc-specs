@@ -8,6 +8,7 @@ pub fn collect() -> HostInfo {
         uptime_secs: System::uptime().unwrap_or(0),
         boot_time: System::boot_time().unwrap_or(0),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
+        edition: crate::edition::NAME.to_string(),
     }
 }
 

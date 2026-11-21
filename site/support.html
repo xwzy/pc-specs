@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC Specs 技术支持</title>
+<meta name="description" content="PC Specs 常见问题与反馈渠道。">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="alternate" hreflang="zh-Hans" href="https://pc-specs.xwzy.dev/support.html">
+<link rel="alternate" hreflang="en" href="https://pc-specs.xwzy.dev/en/support.html">
+<link rel="alternate" hreflang="x-default" href="https://pc-specs.xwzy.dev/support.html">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="./"><img src="assets/icon.png" alt="">PC Specs</a>
+  <nav><a href="./">首页</a><a class="active" href="support.html">技术支持</a><a href="privacy.html">隐私政策</a><details class="language-switcher"><summary>简体中文</summary><div class="language-menu">
+    <a href="https://pc-specs.xwzy.dev/support.html" aria-current="true">简体中文</a>
+    <a href="https://pc-specs.xwzy.dev/en/support.html">English</a>
+  </div></details></nav>
+</div></header>
+
+<main><div class="wrap">
+<h1>PC Specs 技术支持</h1>
+<p class="meta">电脑配置查看与实时监控 · Windows、macOS、Linux · Mac App Store 版需要 macOS 13 及以上</p>
+
+<h2>联系与反馈</h2>
+<p>遇到问题或有想法，欢迎发邮件反馈：<a href="mailto:pc-specs@xwzy.dev">pc-specs@xwzy.dev</a>，全功能版也可以到 <a href="https://github.com/xwzy/pc-specs/issues">GitHub Issues</a> 提问题。</p>
+<p>为了更快定位问题，请尽量附上：</p>
+<ul>
+  <li>PC Specs 的版本（设置 → 关于）和系统版本，以及用的是全功能版还是 Mac App Store 版</li>
+  <li>复现步骤，以及出问题的页面</li>
+  <li>如果可以，一张截图；程序崩溃过的话，附上 <code>crash.log</code>（位置见<a href="privacy.html">隐私政策</a>第四节）</li>
+</ul>
+
+<h2>常见问题</h2>
+
+<details open><summary>PC Specs 会上传我的数据吗？</summary>
+<p>不会。没有账号、统计和广告，也不收集任何数据。Mac App Store 版没有网络权限；全功能版只有公网 IP 查询、网络延迟检测、Webhook 推送和本机 HTTP 接口会用到网络：向外发起的请求，都是你主动打开了对应功能、或正在看对应页面时才发生；本机接口默认只对这台电脑开放。详见<a href="privacy.html">隐私政策</a>。</p></details>
+
+<details><summary>全功能版和 Mac App Store 版有什么区别？</summary>
+<p>同一份源码，编译时选版本。从 GitHub 下载的是全功能版；Mac App Store 版要在苹果的沙盒里运行，所以没有传感器（温度、风扇等）、进程列表、开发环境检测、启动项管理、应用管理、系统缓存清理，也不联网、没有本机 HTTP 接口；存储分析只能读你亲自选的文件夹。完整对照表在<a href="./#editions">首页</a>。</p></details>
+
+<details><summary>Mac App Store 版为什么没有温度、风扇和进程？</summary>
+<p>macOS 读取温度和风扇要用私有的系统接口，沙盒也不允许列出其他应用的进程，所以商店版只显示系统公开的「散热状态」。需要温度、风扇和进程占用的话，请使用从 GitHub 下载的全功能版。</p></details>
+
+<details><summary>怎么分析磁盘空间？</summary>
+<p>打开「存储」页，切到「空间分析」，点「选择文件夹…」（全功能版还能直接选磁盘）。扫描只读取文件名、大小和日期，画成矩形树图；可以切换成旋转图，双击文件夹进入，点上方的面包屑返回，点图例按文件类型过滤。图下面的列表有「最大的文件」「当前文件夹」「重复文件」和「相比上次什么变大了」。</p>
+<p>Mac App Store 版只能读取你在对话框里选的位置，想看哪里就选哪里；macOS 保护的目录即使选了也可能读不到，这是系统的限制。</p></details>
+
+<details><summary>怎么找出重复文件？清理会不会误删？</summary>
+<p>在「空间分析」下面的「重复文件」里点「查找重复文件」，应用会按文件内容比对，只比 1 MiB 以上的文件，并跳过应用包、系统目录和应用数据目录。结果里每一组都会至少留下一份。点「加入收集箱」，多余的副本会先放进收集箱，核对总量之后才一次性移到废纸篓或回收站——应用自己不会直接永久删除，在废纸篓或回收站里还可以恢复。</p>
+<p>注意：在 APFS 上，用访达「复制」出来的副本可能共用同一块存储空间，移走一份实际释放的空间可能比显示的少。</p></details>
+
+<details><summary>菜单栏里的监控项怎么设置？</summary>
+<p>打开侧栏「桌面展示」下的「顶栏监控」页：开关、排序、样式、刷新周期、标签和颜色都在这里，上方有实时预览。点菜单栏里的任意一项，会弹出详细面板，可以看 1 小时、24 小时、7 天、30 天的走势。</p>
+<p>菜单栏太挤的时候（尤其是带刘海的屏幕），macOS 会把放不下的图标藏起来；减少监控项，或者收起别的菜单栏图标就好了。</p></details>
+
+<details><summary>监控大屏怎么用？</summary>
+<p>侧栏「桌面展示」下的「监控大屏」页，点「打开监控大屏」。它是一个独立窗口，可以拖到副屏、切换全屏；底部的操作条可以换主题、切换全屏、打开大屏设置，设置里可以选显示器、布局和配色，也可以设成启动时自动打开。大屏开着的时候屏幕保持常亮。</p></details>
+
+<details><summary>怎么设置开机自启？</summary>
+<p>「设置」里的「开机自启」，默认关闭。启用托盘时，开机后只驻留在托盘里，不弹出主窗口。macOS 上可以随时在「系统设置 → 通用 → 登录项」里关掉。</p></details>
+
+<details><summary>规则触发了，但没有收到通知？</summary>
+<p>先看「设置」里规则的总开关有没有打开，再看系统设置的通知里是否允许 PC Specs 发通知（macOS 在第一次通知前会询问）。在「规则」页展开一条规则，点「试一试」可以立刻发一条测试通知。规则有冷却时间，同一条规则在冷却期内不会重复提醒。</p></details>
+
+<details><summary>导出的报告里有我的隐私信息吗？</summary>
+<p>默认没有：导出时会隐去主机名、用户名、MAC 地址、序列号和公网 IP。如果你想保留，在「设置」里打开「导出包含敏感信息」。分享报告或截图之前，请自己再检查一遍。</p></details>
+
+<details><summary>读数和「活动监视器」「任务管理器」不一样？</summary>
+<p>各软件的统计口径不完全一样，比如内存是否把缓存文件算作「已用」。PC Specs 在内存页里把应用内存、联动内存、已压缩、缓存文件和空闲分开列出，方便你和别的软件对照。系统没有提供的信息，页面上会如实写明，不会编数字。</p></details>
+
+<details><summary>全功能版的本机 HTTP 接口怎么用？</summary>
+<p>全功能版默认在本机的 <code>127.0.0.1:16089</code> 提供只读的数据接口，供你自己的脚本和看板使用；数据接口都用 POST，请求和返回都是 JSON。接口说明在 <a href="https://github.com/xwzy/pc-specs/blob/main/docs/api.md">docs/api.md</a>。可以在「设置」里关闭，或选择「允许局域网访问」（只在可信的网络里开启）。Mac App Store 版没有这个接口。</p></details>
+
+<details><summary>界面是什么语言？怎么换主题？</summary>
+<p>支持简体中文和 English，在「设置 → 语言」里切换，全部页面立即生效。「设置 → 主题」可以选深色、浅色或跟随系统。</p></details>
+
+<details><summary>源码和许可证？</summary>
+<p>PC Specs 以 MIT 许可证开源，源码在 <a href="https://github.com/xwzy/pc-specs">github.com/xwzy/pc-specs</a>。</p></details>
+</div></main>
+
+<footer class="site"><div class="wrap">
+  <span>© 2026 xwzy. All rights reserved.</span>
+  <span><a href="support.html">技术支持</a> · <a href="privacy.html">隐私政策</a></span>
+</div></footer>
+</body>
+</html>

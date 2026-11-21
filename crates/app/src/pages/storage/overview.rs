@@ -1,6 +1,6 @@
 //! 概览：每个卷一张卡片，含容量占用、实时读写与 SMART 状态，卡片上可以直接去分析它。
 
-use super::{StoragePage, volume_target};
+use super::{StoragePage, speed, volume_target};
 use crate::health::Level;
 use crate::state::AppState;
 use crate::{fmt, ui};
@@ -157,22 +157,25 @@ fn card(
         .filter(|mount| !mount.is_empty())
         .map(|mount| {
             let target = volume_target(&d.name, mount);
+            let testable = speed::testable(mount);
             let mount = mount.to_string();
             let (analyze_page, speed_page) = (page.clone(), page.clone());
             h_flex()
                 .justify_end()
                 .gap_2()
-                .child(
-                    Button::new(SharedString::from(format!("disk-speed-{index}")))
-                        .small()
-                        .outline()
-                        .icon(IconName::Gauge)
-                        .label(t!("sa_speed_test_disk").into_owned())
-                        .on_click(move |_, _, cx| {
-                            let mount = mount.clone();
-                            speed_page.update(cx, |page, cx| page.open_speed(mount, cx));
-                        }),
-                )
+                .when(testable, |this| {
+                    this.child(
+                        Button::new(SharedString::from(format!("disk-speed-{index}")))
+                            .small()
+                            .outline()
+                            .icon(IconName::Gauge)
+                            .label(t!("sa_speed_test_disk").into_owned())
+                            .on_click(move |_, _, cx| {
+                                let mount = mount.clone();
+                                speed_page.update(cx, |page, cx| page.open_speed(mount, cx));
+                            }),
+                    )
+                })
                 .child(
                     Button::new(SharedString::from(format!("disk-analyze-{index}")))
                         .small()
@@ -181,7 +184,7 @@ fn card(
                         .label(t!("sa_analyze_disk").into_owned())
                         .on_click(move |_, _, cx| {
                             let target = target.clone();
-                            analyze_page.update(cx, |page, cx| page.start(target, cx));
+                            analyze_page.update(cx, |page, cx| page.analyze_volume(target, cx));
                         }),
                 )
         });

@@ -20,6 +20,7 @@ use gpui_kit::{
     prelude::FluentBuilder as _, px,
 };
 use pc_specs_core::bench::{self, Phase, Progress, Random, Report};
+use pc_specs_core::edition;
 use pc_specs_core::util::guarded;
 use rust_i18n::t;
 use std::collections::HashMap;
@@ -87,6 +88,9 @@ impl StoragePage {
             .iter()
             .filter_map(|disk| {
                 let mount = disk.mount_point.clone().filter(|mount| !mount.is_empty())?;
+                if !testable(&mount) {
+                    return None;
+                }
                 let name = if disk.name.trim().is_empty() {
                     mount.clone()
                 } else {
@@ -278,6 +282,13 @@ fn size_options(unit: SizeUnit) -> [(u64, String); 3] {
         SizeUnit::Decimal => (1_000_000_000, "GB"),
     };
     SIZES.map(|n| (n * base, format!("{n} {name}")))
+}
+
+/// 这块盘能不能测。沙盒里只能往应用自己的容器写文件，所以只有容器所在的那块盘（系统盘）能测；
+/// 其他版本想测哪块都行。
+pub(super) fn testable(mount: &str) -> bool {
+    !edition::SANDBOXED
+        || dirs::cache_dir().is_some_and(|cache| same_volume(&cache, &scan_root(mount)))
 }
 
 /// 在这块盘上找个放测试文件的目录。用户自己的目录就在这块盘上的话，放进缓存目录里
@@ -519,6 +530,13 @@ pub(super) fn body(
                 .py_6()
                 .into_any_element(),
         ),
+    }
+    if edition::SANDBOXED {
+        body.push(
+            ui::muted(t!("sa_speed_sandbox").into_owned(), cx)
+                .text_xs()
+                .into_any_element(),
+        );
     }
     if !history.is_empty() {
         body.push(history_table(history, unit));

@@ -4,7 +4,9 @@
 //! 基线，互不干扰：应用的监控线程和 HTTP 接口各用一个，谁也不会"偷走"对方的增量。
 
 use crate::model::{DiskTick, GpuTick, InterfaceTick, MonitorTick, ProcessInfo, SensorReading};
-use crate::modules::{cpu, gpu, network, sensors, storage};
+#[cfg(not(feature = "appstore"))]
+use crate::modules::sensors;
+use crate::modules::{cpu, gpu, network, storage};
 use crate::platform;
 use crate::process_net::NetSampler;
 use crate::util::now_ms;
@@ -12,10 +14,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 #[cfg(not(target_os = "macos"))]
 use sysinfo::Networks;
-use sysinfo::{
-    Components, CpuRefreshKind, DiskRefreshKind, Disks, Gpus, MemoryRefreshKind,
-    ProcessRefreshKind, ProcessesToUpdate, System,
-};
+#[cfg(not(feature = "appstore"))]
+use sysinfo::{Components, ProcessRefreshKind, ProcessesToUpdate};
+use sysinfo::{CpuRefreshKind, DiskRefreshKind, Disks, Gpus, MemoryRefreshKind, System};
 
 /// 温度传感器的读取成本在 Windows（WMI）和 macOS（HID）上都不低，没必要每个 tick 都读。
 pub const TEMPERATURE_TTL: Duration = Duration::from_secs(3);
@@ -99,6 +100,7 @@ pub struct Sampler {
     #[cfg(target_os = "macos")]
     disk_plan: Vec<DiskPlan>,
     gpus: Option<Gpus>,
+    #[cfg(not(feature = "appstore"))]
     components: Option<Components>,
     /// 接口名 → 类型，名字只分类一次。
     net_kinds: HashMap<String, &'static str>,
@@ -167,6 +169,7 @@ impl Sampler {
             disk_plan: disks.as_ref().map(plan_disks).unwrap_or_default(),
             disks,
             gpus: Gpus::new_with_refreshed_list().ok(),
+            #[cfg(not(feature = "appstore"))]
             components: Components::new_with_refreshed_list().ok(),
             net_kinds: HashMap::new(),
             temperatures: Vec::new(),
@@ -372,18 +375,22 @@ impl Sampler {
 
         if let Some(every) = self.temperature_every {
             if self.temperatures_at.is_none_or(|t| t.elapsed() >= every) {
-                let mut temperatures = self.components.as_mut().map_or_else(Vec::new, |c| {
-                    c.refresh(false);
-                    sensors::temperatures(c)
-                });
-                // 平台自己的传感器里也有温度（macOS 的 CPU / GPU 逐核温度），并进温度列表，其余归「其他」。
-                let (platform_temperatures, others): (Vec<_>, Vec<_>) =
-                    crate::platform::live_sensors()
-                        .into_iter()
-                        .partition(|r| r.kind == "temperature");
-                temperatures.extend(platform_temperatures);
-                self.temperatures = temperatures;
-                self.other_sensors = others;
+                // 商店版没有传感器（见 `edition::SENSORS`），只读系统的热压力等级。
+                #[cfg(not(feature = "appstore"))]
+                {
+                    let mut temperatures = self.components.as_mut().map_or_else(Vec::new, |c| {
+                        c.refresh(false);
+                        sensors::temperatures(c)
+                    });
+                    // 平台自己的传感器里也有温度（macOS 的 CPU / GPU 逐核温度），并进温度列表，其余归「其他」。
+                    let (platform_temperatures, others): (Vec<_>, Vec<_>) =
+                        crate::platform::live_sensors()
+                            .into_iter()
+                            .partition(|r| r.kind == "temperature");
+                    temperatures.extend(platform_temperatures);
+                    self.temperatures = temperatures;
+                    self.other_sensors = others;
+                }
                 self.thermal_pressure = platform::thermal_pressure();
                 self.temperatures_at = Some(Instant::now());
             }
@@ -473,7 +480,10 @@ fn sample_delay(last_at: Option<Instant>, now: Instant) -> Duration {
 
 /// 进程列表采样（任务管理器式的轻量视图）。
 pub struct ProcessSampler {
+    // 商店版在沙盒里列不出进程，只能靠套接字表看「谁在用网络」（见 `sample`）。
+    #[cfg(not(feature = "appstore"))]
     system: Option<System>,
+    #[cfg(not(feature = "appstore"))]
     last_at: Option<Instant>,
     /// 按进程统计网络流量。要另外读一遍套接字表，所以只在有人看的时候才开（见 [`Self::set_network`]）。
     net: Option<NetSampler>,
@@ -488,6 +498,7 @@ impl Default for ProcessSampler {
 }
 
 impl ProcessSampler {
+    #[cfg(not(feature = "appstore"))]
     pub fn new() -> Self {
         let mut s = Self {
             system: System::new().ok(),
@@ -501,6 +512,15 @@ impl ProcessSampler {
         s
     }
 
+    #[cfg(feature = "appstore")]
+    pub fn new() -> Self {
+        Self {
+            net: None,
+            net_ready: false,
+        }
+    }
+
+    #[cfg(not(feature = "appstore"))]
     fn refresh(&mut self) {
         if let Some(sys) = self.system.as_mut() {
             sys.refresh_processes_specifics(
@@ -535,7 +555,30 @@ impl ProcessSampler {
         self.net_ready
     }
 
+    /// 商店版：沙盒里系统不让应用枚举别的进程，所以只返回这一轮有网络流量的进程
+    /// （进程名按 pid 查），其余字段为 0。没打开网络统计时是空的。
+    #[cfg(feature = "appstore")]
+    pub fn sample(&mut self) -> Vec<ProcessInfo> {
+        let traffic = self.net.as_mut().and_then(NetSampler::sample);
+        self.net_ready = traffic.is_some();
+        traffic
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(pid, (net_rx_bps, net_tx_bps))| ProcessInfo {
+                pid,
+                name: platform::process_name(pid).unwrap_or_else(|| format!("pid {pid}")),
+                cpu_percent: 0.0,
+                mem_bytes: 0,
+                read_bps: 0,
+                write_bps: 0,
+                net_rx_bps,
+                net_tx_bps,
+            })
+            .collect()
+    }
+
     /// 全部进程，未排序。`cpu_percent` 以单核满载为 100%，多线程进程可以超过 100。
+    #[cfg(not(feature = "appstore"))]
     pub fn sample(&mut self) -> Vec<ProcessInfo> {
         let now = Instant::now();
         let elapsed = self

@@ -12,7 +12,7 @@
 - **界面**：GPUI Kit 0.9（gpui-component + 主题 / 图标 / 图表），`rust-i18n` 做中英文
 - **采集层**：`crates/core`，与界面完全解耦。以 sysinfo 为主，再按平台补专用路径（Windows WMI / Win32，macOS sysctl / system_profiler / ioreg，Linux sysfs / DMI）
 - **系统托盘**：GPUI 没有托盘 API，用 `tray-icon`（Linux 走 StatusNotifierItem，不依赖 GTK）
-- **本地 HTTP 采集服务**：axum，默认 `0.0.0.0:16089`，可在设置里关闭或改为仅本机
+- **本地 HTTP 采集服务**：axum，默认只监听本机 `127.0.0.1:16089`，可在设置里关闭，或打开「允许局域网访问」（仅全功能版有）
 
 ## 目录结构
 
@@ -23,8 +23,10 @@ pc-specs/
 ├── assets/icons/     # 各平台图标（source.png 是母版，scripts/gen_icons.py 从它生成其余）
 ├── packaging/        # 各平台的打包素材：macos/（Info.plist）、linux/（desktop、AppStream、rpm spec）、windows/（Inno Setup 脚本）
 ├── scripts/          # 版本管理、各平台的编译 / 打包 / 签名脚本，见下面「打包与发布」
+├── AppStore/         # Mac App Store 上架截图（zh-Hans、en-US 各 8 张，2880×1800）
+├── site/             # 官网、隐私政策、技术支持页（中英文，部署到 Cloudflare Pages）
 ├── .github/workflows/release.yml   # 手动触发的发布工作流
-└── docs/             # 文档
+└── docs/             # 文档（含 Mac App Store 合规审计、上架文案、发布清单）
 ```
 
 ## 开发
@@ -41,6 +43,25 @@ Rust 需要 1.92+。Linux 的编译依赖用 `scripts/linux/install-deps.sh` 安
 运行时 Linux 需要可用的 Vulkan 驱动与 Wayland / X11 会话。发行包在 Ubuntu 22.04（glibc 2.35）上构建，Ubuntu 22.04+、Debian 12+、Fedora 36+ 及同期的发行版可以运行。deb / rpm 会自动安装依赖库；tar.gz 和 AppImage 不带库，需要系统里有 libvulkan、libxkbcommon-x11、libwayland-client、libX11-xcb、libfontconfig。
 
 ## 打包与发布
+
+### 两个版本
+
+同一份源码，编译时用 Cargo 特性选版本，唯一的开关在 `crates/core/src/edition.rs`：
+
+| 版本 | 特性 | 说明 |
+| --- | --- | --- |
+| 全功能版（默认） | `full` | Windows / macOS / Linux，通过 GitHub Releases 自行发布 |
+| Mac App Store 版 | `appstore`（仅 macOS） | 沙盒、只用公开接口、不联网；没有传感器、进程列表、启动项 / 应用管理 / 缓存清理、公网 IP / 延迟探测 / Webhook 和本机 HTTP 接口；存储分析只能读用户在对话框里选的文件夹 |
+
+```bash
+scripts/build-full.sh [--arch ...] [--package]       # 全功能版
+scripts/build-appstore.sh [--arch ...] [--package]   # 商店版；--package 签名并打成 .pkg
+scripts/build.sh --edition full|appstore [--platform ...] [--arch ...] [--package]
+scripts/macos/appstore.sh check|build|package|validate|upload   # 商店版全流程
+scripts/macos/scan-private-api.sh "PC Specs.app"     # 扫描成品里有没有非公开 API
+```
+
+对照 App Review Guidelines 的审计见 `docs/APP_STORE_COMPLIANCE.md`，逐字段的上架文案见 `docs/APP_STORE_LISTING.md`，从签名到提审的步骤见 `docs/RELEASE_CHECKLIST.md`。
 
 ### 版本号
 
@@ -89,7 +110,7 @@ scripts/version.sh check          # 检查各处版本一致、Cargo.lock 没有
 - CPU / GPU / 内存 / 存储 / 主板 / 显示 / 网络 / 电池 / 传感器 / 外设（含蓝牙设备电量）/ 操作系统 / 开发环境详情页
 - 实时监控（CPU、内存、网络、磁盘 IO、温度、GPU 走势，每核心占用，可暂停 / 清空 / 切换历史时长）
 - 进程列表（排序、按名称或 PID 筛选）
-- **存储空间分析**（存储页 → 空间分析）：把整块磁盘或任意文件夹扫描成可交互的图——矩形树图（类似 SpaceSniffer）或旋转图（类似 DaisyDisk），色块越大占用越多。按文件类型着色并可点图例过滤，双击下钻、面包屑返回；列表里有最大文件榜、重复文件、和上次扫描相比什么变大了；可按名称、大小、时间搜索筛选。选中后可打开、预览（macOS 用 Quick Look）、在文件夹中显示、复制路径，或加入「收集箱」——核对总量后一次性移到废纸篓 / 回收站；也能导出 CSV。扫描整盘时还会说出「看不见的占用」（扫描没覆盖到的空间、macOS 的本地快照与可清除空间）。扫描只读取文件大小，不改动任何文件；macOS 上扫描整盘需要「完全磁盘访问」才能读到受保护的目录
+- **存储空间分析**（存储页 → 空间分析）：把整块磁盘或任意文件夹扫描成可交互的图——矩形树图（类似 SpaceSniffer）或旋转图（类似 DaisyDisk），色块越大占用越多。按文件类型着色并可点图例过滤，双击下钻、面包屑返回；列表里有最大文件榜、重复文件、和上次扫描相比什么变大了；可按名称、大小、时间搜索筛选。选中后可打开、预览（macOS 用 Quick Look）、在文件夹中显示、复制路径，或加入「收集箱」——核对总量后一次性移到废纸篓 / 回收站；也能导出 CSV。扫描整盘时还会说出「看不见的占用」（扫描没覆盖到的空间、macOS 的本地快照与可清除空间）。扫描只读取文件名、大小和日期（查找重复文件时才会读文件内容来比对），不改动任何文件；macOS 上扫描整盘需要「完全磁盘访问」才能读到受保护的目录
 - **一键清理**（存储页 → 清理）：缓存、浏览器缓存、日志、临时文件、开发工具缓存（Cargo / Go / Gradle / Xcode / npm 等）、闲置项目里的构建产物（两周没动过的项目里的 `node_modules`、`target`、虚拟环境等，默认不勾）、废纸篓。只认写死的位置（项目产物要旁边有对应的项目文件才认）、只动位置里面、不跟随符号链接，清理前列出清单并确认
 - **磁盘速度测试**（存储页 → 速度测试）：在所选磁盘上写一个临时文件，绕开系统缓存测顺序读写和 4K 随机读写（单线程 / 多线程，IOPS 与延迟），测完就删，哪怕测到一半程序被杀也不会留下文件；每块盘记下最近几次的结果，和上一次对比
 - **启动项管理**（工具 → 启动项）：登录项、后台代理和守护进程（macOS）、注册表 Run 项和启动文件夹（Windows）、autostart（Linux）；一键停用 / 启用，随时可以改回来

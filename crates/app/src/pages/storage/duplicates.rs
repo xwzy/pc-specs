@@ -4,7 +4,7 @@
 //! 不会直接删任何东西，真正移走还是在收集箱里确认；每一组至少留下一份没进收集箱的。
 
 use super::analyzer::{Colors, count};
-use super::{Report, StoragePage, bin_name, user_path};
+use super::{Report, StoragePage, bin_name, user_home, user_path};
 use crate::settings::SizeUnit;
 use crate::state::spawn_thread;
 use crate::{fmt, ui};
@@ -210,7 +210,7 @@ impl StoragePage {
         let scope = scope_name(report);
         let id = report.id;
         // 最大的文件优先；小的不比，个数也封顶。
-        let home = dirs::home_dir();
+        let home = user_home();
         let mut names: HashMap<PathBuf, Vec<Box<str>>> = HashMap::new();
         let candidates: Vec<Candidate> = view
             .top_files(MAX_FILES, None)

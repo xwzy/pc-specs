@@ -17,6 +17,17 @@ SUMMARY="PC configuration viewer and live monitor"
 
 # macOS 最低系统版本：编译时的 deployment target 与 Info.plist 的 LSMinimumSystemVersion 共用这一个值。
 MACOS_MIN_VERSION="${MACOS_MIN_VERSION:-11.0}"
+# 商店版的最低系统版本：登录项要用 SMAppService（macOS 13 起）。
+MACOS_APPSTORE_MIN_VERSION="${MACOS_APPSTORE_MIN_VERSION:-13.0}"
+
+# 某个发行版的最低 macOS 版本。
+macos_min_version() {
+  if [ "${1:-full}" = "appstore" ]; then
+    printf '%s' "$MACOS_APPSTORE_MIN_VERSION"
+  else
+    printf '%s' "$MACOS_MIN_VERSION"
+  fi
+}
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
@@ -46,6 +57,29 @@ app_version() {
   ' "$ROOT/Cargo.toml")"
   [ -n "$version" ] || die "根 Cargo.toml 的 [workspace.package] 里没有找到 version"
   printf '%s' "$version"
+}
+
+# Mac App Store 的构建号（Info.plist 的 CFBundleVersion）：纯数字，每次上传都必须比上一次大。
+# 它和对外显示的版本号是两回事，存在根 Cargo.toml 的 [workspace.metadata.appstore].build；
+# 环境变量 BUILD_NUMBER 可以临时覆盖（比如 CI 里用流水线编号）。
+app_build_number() {
+  local build="${BUILD_NUMBER:-}"
+  if [ -z "$build" ]; then
+    build="$(awk '
+      /^\[/ { section = $0 }
+      section == "[workspace.metadata.appstore]" && /^build[[:space:]]*=/ {
+        line = $0
+        sub(/^build[[:space:]]*=[[:space:]]*/, "", line)
+        sub(/[[:space:]]*(#.*)?$/, "", line)
+        print line
+        exit
+      }
+    ' "$ROOT/Cargo.toml")"
+  fi
+  case "$build" in
+    '' | *[!0-9]* | 0*) die "构建号必须是不以 0 开头的正整数（现在是：${build:-空}）：改根 Cargo.toml 的 [workspace.metadata.appstore].build，或设置 BUILD_NUMBER" ;;
+  esac
+  printf '%s' "$build"
 }
 
 # 去掉预发布 / 构建元数据后缀：1.2.3-rc.1+abc → 1.2.3。macOS 的 Bundle 版本、Windows 的文件版本只认纯数字。
@@ -82,9 +116,28 @@ macos_triple() {
   esac
 }
 
-# 某个架构编译出来的 macOS 二进制放在哪。
+# 发行版（编译时由 cargo 特性决定，见 crates/core/src/edition.rs）：
+#   full      自行发布的全功能版（默认）
+#   appstore  Mac App Store 版：只留沙盒里审核能放行的部分，只有 macOS 有
+check_edition() {
+  case "$1" in
+    full | appstore) ;;
+    *) die "不支持的版本：${1}（full | appstore）" ;;
+  esac
+}
+
+# 某个发行版的 cargo 输出目录。商店版用独立的子目录：和全功能版互不覆盖，增量编译也互不拖累。
+edition_target_dir() {
+  if [ "${1:-full}" = "appstore" ]; then
+    printf '%s/appstore' "$(target_dir)"
+  else
+    target_dir
+  fi
+}
+
+# 某个架构、某个发行版编译出来的 macOS 二进制放在哪（发行版默认是全功能版）。
 macos_binary() {
-  printf '%s/%s/release/%s' "$(target_dir)" "$(macos_triple "$1")" "$BIN_NAME"
+  printf '%s/%s/release/%s' "$(edition_target_dir "${2:-full}")" "$(macos_triple "$1")" "$BIN_NAME"
 }
 
 # Linux 只做本机原生编译（别的架构用 scripts/linux/docker.sh，或 CI 里对应架构的 runner），产物在 target/release/。

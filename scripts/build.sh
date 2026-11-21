@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # 编译（可选再打包）发布版：按本机系统和目标平台，自动选原生编译还是 Docker。
 #
-#   scripts/build.sh [--platform macos|linux|windows] [--arch <架构>] [--package]
+#   scripts/build.sh [--platform macos|linux|windows] [--arch <架构>] [--edition full|appstore] [--package]
 #     --platform  目标平台，默认当前系统
 #     --arch      macOS：universal | arm64 | x64（默认 universal）；Linux、Windows：x64 | arm64（默认本机架构）
-#     --package   编译完接着打发布用的安装包，放进 dist/
+#     --edition   full：自行发布的全功能版（默认）；appstore：Mac App Store 版（只有 macOS 有，功能见 docs/APP_STORE_COMPLIANCE.md）
+#     --package   编译完接着打发布用的安装包，放进 dist/（商店版是上传 App Store Connect 的 .pkg，需要证书和描述文件）
+#
+# 两个版本也各有一个快捷脚本：scripts/build-full.sh、scripts/build-appstore.sh。
 #
 # 在哪台机器上能出什么：
 #   目标 macOS    只能在 macOS 上（要 Xcode 的工具链和签名工具）。Intel 和 universal 在 Apple 芯片的 Mac 上也能编。
@@ -20,6 +23,7 @@ source "$(dirname "$0")/lib/common.sh"
 
 platform=""
 arch=""
+edition="full"
 package=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,6 +33,10 @@ while [ $# -gt 0 ]; do
       ;;
     --arch)
       arch="${2:?--arch 需要参数}"
+      shift
+      ;;
+    --edition)
+      edition="${2:?--edition 需要参数：full | appstore}"
       shift
       ;;
     --package) package=1 ;;
@@ -47,6 +55,10 @@ case "$(uname -s)" in
   *) die "Windows 上请直接用 PowerShell 脚本：scripts\\windows\\build.ps1 和 scripts\\windows\\package.ps1" ;;
 esac
 platform="${platform:-$host}"
+check_edition "$edition"
+if [ "$edition" = "appstore" ] && [ "$platform" != "macos" ]; then
+  die "商店版（appstore）只有 macOS 的，别的平台用 --edition full"
+fi
 
 # 要传给各平台脚本的 --arch；没指定就让它们用各自的默认值。
 arch_args=()
@@ -57,9 +69,17 @@ fi
 case "$platform" in
   macos)
     [ "$host" = "macos" ] || die "macOS 版只能在 macOS 上编译；没有 Mac 的话，用 GitHub Actions 的 Release 工作流"
-    "$ROOT/scripts/macos/build.sh" ${arch_args[@]+"${arch_args[@]}"}
-    if [ "$package" = 1 ]; then
-      "$ROOT/scripts/macos/package.sh" ${arch_args[@]+"${arch_args[@]}"}
+    if [ "$edition" = "appstore" ]; then
+      if [ "$package" = 1 ]; then
+        "$ROOT/scripts/macos/appstore.sh" package ${arch_args[@]+"${arch_args[@]}"}
+      else
+        "$ROOT/scripts/macos/build.sh" --edition appstore ${arch_args[@]+"${arch_args[@]}"}
+      fi
+    else
+      "$ROOT/scripts/macos/build.sh" ${arch_args[@]+"${arch_args[@]}"}
+      if [ "$package" = 1 ]; then
+        "$ROOT/scripts/macos/package.sh" ${arch_args[@]+"${arch_args[@]}"}
+      fi
     fi
     ;;
 

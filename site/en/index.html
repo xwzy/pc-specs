@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC Specs - System Info and Live Monitor</title>
+<meta name="description" content="PC Specs is a cross-platform tool for viewing your computer's hardware and watching it live: hardware details at a glance, real-time charts for CPU, memory, network and disk, a menu bar monitor, a monitoring wall, and a disk treemap that finds big files and duplicates. It runs entirely on your machine and collects no data.">
+<link rel="icon" href="../assets/icon.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="alternate" hreflang="zh-Hans" href="https://pc-specs.xwzy.dev/">
+<link rel="alternate" hreflang="en" href="https://pc-specs.xwzy.dev/en/">
+<link rel="alternate" hreflang="x-default" href="https://pc-specs.xwzy.dev/">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="./"><img src="../assets/icon.png" alt="">PC Specs</a>
+  <nav><a class="active" href="./">Home</a><a href="support.html">Support</a><a href="privacy.html">Privacy Policy</a><details class="language-switcher"><summary>English</summary><div class="language-menu">
+    <a href="https://pc-specs.xwzy.dev/">简体中文</a>
+    <a href="https://pc-specs.xwzy.dev/en/" aria-current="true">English</a>
+  </div></details></nav>
+</div></header>
+
+<main><div class="wrap">
+<section class="hero">
+  <img class="icon" src="../assets/icon.png" alt="PC Specs icon">
+  <h1>PC Specs</h1>
+  <p class="lead">See your hardware, watch it live, find what fills your disk</p>
+  <a class="btn" href="https://github.com/xwzy/pc-specs/releases/latest">Download the full edition</a>
+  <p class="download-meta">Windows · macOS · Linux · Free and open source (MIT)</p>
+  <p class="download-help">Pick the installer for your system on the GitHub Releases page. The same code also builds a Mac App Store edition with fewer features; see “Two editions” below.</p>
+  <img class="shot" src="../assets/screenshots/en/01-overview.jpg" alt="PC Specs dashboard: CPU, memory, GPU, storage, network and thermal state, each card with a live chart">
+</section>
+
+<h2>Features</h2>
+<div class="grid">
+  <div class="card"><h3>Dashboard</h3><p>CPU, memory, GPU, storage, network and thermal state on one page, with a one-line verdict on whether anything is wrong. Every card has a live chart and opens its detail page.</p></div>
+  <div class="card"><h3>Hardware details</h3><p>Processor, GPU, memory, storage, motherboard, display, network, battery, peripherals and operating system, page by page. Memory breakdown, Wi-Fi signal and battery health at a glance. Anything the system does not report is shown as such, never invented.</p></div>
+  <div class="card"><h3>Live monitor</h3><p>Real-time charts for CPU, memory, network, disk I/O and GPU, with every CPU core shown separately. Pause, clear, or switch the history between 1, 5 and 10 minutes.</p></div>
+  <div class="card"><h3>Menu bar monitor</h3><p>Put CPU, memory, storage and network speed in the macOS menu bar, in the style and order you like. Click one for a detail panel with trends from 1 hour to 30 days.</p></div>
+  <div class="card"><h3>Monitoring wall</h3><p>Fill another display with live readings: 15 themes and 5 layouts that adapt to landscape, portrait and ultrawide screens, and it keeps the screen awake while open.</p></div>
+  <div class="card"><h3>Storage analysis</h3><p>Scan a disk or any folder into a treemap or sunburst where bigger blocks mean more space. Includes a largest-files list, duplicate files (compared by content) and what grew since the last scan.</p></div>
+  <div class="card"><h3>Collector and speed test</h3><p>Put what you want to clear in the collector, check the total, then move it all to the Trash or Recycle Bin at once. The disk speed test measures sequential and 4K random read/write and compares with the last run.</p></div>
+  <div class="card"><h3>Rules and notifications</h3><p>Pick a reading, a threshold and a duration, and get a system notification with a cooldown so it never spams. CPU, memory and disk rules are built in.</p></div>
+  <div class="card"><h3>Export and settings</h3><p>Export Markdown, JSON or a long PNG poster, with MAC addresses, serial numbers and hostname redacted by default. Dark, light or follow the system; settings can be exported and imported on another computer.</p></div>
+</div>
+<div class="promise"><strong>Runs entirely on your machine.</strong> No account, ads or analytics, and no data collected. The Mac App Store edition has no network access at all; the full edition only reaches out to the network when you turn a feature on or are looking at the page that uses it. See the <a href="privacy.html">privacy policy</a>.</div>
+
+<h2 id="editions">Two editions</h2>
+<p>One code base, with the edition chosen at build time. What you download from GitHub is the full edition. The Mac App Store edition runs inside Apple's sandbox, which rules out private interfaces, listing other processes and network access, so it does less:</p>
+<table>
+<tr><th>Capability</th><th>Full edition (GitHub)</th><th>Mac App Store edition</th></tr>
+<tr><td>Platforms</td><td>Windows, macOS, Linux</td><td>macOS 13 or later</td></tr>
+<tr><td>Dashboard, live monitor, menu bar monitor, monitoring wall, hardware pages, rules and notifications</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Storage analysis, disk speed test</td><td>Whole disks or any folder</td><td>Only folders you pick in the open dialog; the speed test covers the system disk only</td></tr>
+<tr><td>Temperature, fan, voltage and power sensors</td><td>Yes</td><td>No (only the system's “thermal state”)</td></tr>
+<tr><td>Process list with per-process usage and network traffic</td><td>Yes</td><td>No</td></tr>
+<tr><td>Dev environment check, startup items, app management, system cache cleaning</td><td>Yes</td><td>No</td></tr>
+<tr><td>Public IP lookup, network latency check, webhooks</td><td>Yes (see the privacy policy)</td><td>No, the app never goes online</td></tr>
+<tr><td>Local HTTP data API</td><td>Yes, reachable from this machine only by default</td><td>No</td></tr>
+</table>
+
+<h2>Screenshots</h2>
+<div class="gallery">
+  <img src="../assets/screenshots/en/02-hardware.jpg" alt="Hardware details: the CPU and memory pages with a clear memory breakdown" loading="lazy">
+  <img src="../assets/screenshots/en/03-realtime.jpg" alt="Live monitor: CPU, memory, network and disk I/O charts" loading="lazy">
+  <img src="../assets/screenshots/en/04-menubar.jpg" alt="Menu bar monitor: detail panels for CPU, memory, network and storage" loading="lazy">
+  <img src="../assets/screenshots/en/05-bigscreen.jpg" alt="Monitoring wall: live readings on a second display" loading="lazy">
+  <img src="../assets/screenshots/en/06-storage-map.jpg" alt="Storage analysis: treemap" loading="lazy">
+  <img src="../assets/screenshots/en/07-duplicates.jpg" alt="Duplicate and large files, moved to the Trash after a final check" loading="lazy">
+  <img src="../assets/screenshots/en/08-appearance.jpg" alt="Dark and light themes" loading="lazy">
+</div>
+
+<h2>System requirements</h2>
+<p>Windows · macOS 11 or later (the Mac App Store edition needs macOS 13 or later) · Linux (Ubuntu 22.04+, Debian 12+, Fedora 36+ and comparable distributions, with a Vulkan driver and a Wayland or X11 session). Interface languages: Simplified Chinese and English, switchable in Settings.</p>
+<p>Source code and per-system install notes are on <a href="https://github.com/xwzy/pc-specs">GitHub</a>.</p>
+</div></main>
+
+<footer class="site"><div class="wrap">
+  <span>© 2026 xwzy. All rights reserved.</span>
+  <span><a href="https://pc-specs.xwzy.dev/en/support.html">Support</a> · <a href="https://pc-specs.xwzy.dev/en/privacy.html">Privacy Policy</a> · <a href="mailto:pc-specs@xwzy.dev">Send feedback</a></span>
+</div></footer>
+</body>
+</html>

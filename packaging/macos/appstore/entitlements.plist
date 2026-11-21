@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Mac App Store 版的沙盒权限，由 scripts/macos/appstore.sh 在签名时带上，
+     并和描述文件里的 com.apple.application-identifier / com.apple.developer.team-identifier 合并。
+     原则：权限越少越好，审核会逐项问为什么要。 -->
+<plist version="1.0">
+<dict>
+  <!-- 沙盒：Mac App Store 的硬性要求（准则 2.4.5）。 -->
+  <key>com.apple.security.app-sandbox</key><true/>
+  <!-- 存储分析要读用户在「选择文件夹」对话框里选的位置，把重复文件、大文件移到废纸篓，
+       导出报告和长图也写到用户在保存对话框里选的地方。只有用户亲自选的位置才能碰。 -->
+  <key>com.apple.security.files.user-selected.read-write</key><true/>
+  <!-- 把用户选过的文件夹存成书签：下次启动时「最近分析」里的文件夹不用再选一遍。 -->
+  <key>com.apple.security.files.bookmarks.app-scope</key><true/>
+  <!-- 故意没有：com.apple.security.network.client / network.server（应用不联网，也不在本机开端口）、
+       automation.apple-events（不读写登录项和别的应用）、temporary-exception 这类例外。 -->
+</dict>
+</plist>

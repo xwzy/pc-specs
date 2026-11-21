@@ -186,15 +186,24 @@ pub fn measure(
 }
 
 fn probe(target: &Target, interface: Option<NonZeroU32>) -> Reading {
+    probe_with(target, interface, fastest)
+}
+
+/// `measure` 是真正去连的那一步；拆出来是为了测试里能喂固定的读数，不用靠机器当时的快慢。
+fn probe_with(
+    target: &Target,
+    interface: Option<NonZeroU32>,
+    measure: impl Fn(&[SocketAddr], Option<NonZeroU32>) -> Option<(usize, f32)>,
+) -> Reading {
     let found = if target.kind == TargetKind::Gateway {
         // 网关就在本网段，绑不绑网卡都不会被代理接走，也不必退而求其次。
-        fastest(&target.addrs, interface)
+        measure(&target.addrs, interface)
     } else {
         // 从物理网卡直接出去量；这条路不通（比如只放行 VPN 隧道的网络）再退回普通连接，
         // 但普通连接里被代理在本机接住的读数不算数。
         interface
-            .and_then(|index| fastest(&target.addrs, Some(index)))
-            .or_else(|| fastest(&target.addrs, None).filter(|(_, rtt)| *rtt >= MIN_PLAIN_RTT_MS))
+            .and_then(|index| measure(&target.addrs, Some(index)))
+            .or_else(|| measure(&target.addrs, None).filter(|(_, rtt)| *rtt >= MIN_PLAIN_RTT_MS))
     };
     let address = |index: usize| {
         target
@@ -806,26 +815,25 @@ mod tests {
 
     #[test]
     fn handshakes_the_local_proxy_answers_are_not_trusted() {
-        // 本机回环的握手只要几十微秒：对网关是真实读数，对 DNS / 公网只会是代理接住了握手。
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addrs = vec![listener.local_addr().unwrap()];
-        let gateway = probe(
-            &Target {
-                kind: TargetKind::Gateway,
-                addrs: addrs.clone(),
-            },
-            None,
-        );
-        assert!(gateway.rtt_ms.is_some_and(|rtt| rtt < MIN_PLAIN_RTT_MS));
-        let dns = probe(
-            &Target {
-                kind: TargetKind::Dns,
-                addrs,
-            },
-            None,
-        );
+        // 固定的读数，不真的去连：真连的话，机器忙的时候回环握手也可能超过 1 毫秒，测试就会时好时坏。
+        let measured = |rtt: f32| move |_: &[SocketAddr], _: Option<NonZeroU32>| Some((0, rtt));
+        let target = |kind| Target {
+            kind,
+            addrs: vec![SocketAddr::from(([10, 0, 0, 1], 80))],
+        };
+        // 只有零点几毫秒的握手：网关就在本网段，是真实读数；DNS / 公网不可能这么近，是代理接住了握手。
+        let gateway = probe_with(&target(TargetKind::Gateway), None, measured(0.3));
+        assert_eq!(gateway.rtt_ms, Some(0.3));
+        let dns = probe_with(&target(TargetKind::Dns), None, measured(0.3));
         assert_eq!(dns.rtt_ms, None);
-        assert_eq!(dns.address, "127.0.0.1");
+        assert_eq!(dns.address, "10.0.0.1");
+        // 正常的延迟照收。
+        let internet = probe_with(&target(TargetKind::Internet), None, measured(8.0));
+        assert_eq!(internet.rtt_ms, Some(8.0));
+        // 绑到物理网卡上量的读数绕开了代理，再快也可信。
+        let index = NonZeroU32::new(1);
+        let bound = probe_with(&target(TargetKind::Dns), index, measured(0.3));
+        assert_eq!(bound.rtt_ms, Some(0.3));
     }
 
     #[test]

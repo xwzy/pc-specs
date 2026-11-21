@@ -9,7 +9,8 @@
 //! 找残留宁缺毋滥，误删比漏删糟得多：只认「名字等于 Bundle ID（或以它加一个点开头）」和
 //! 「名字和应用同名」，并且已经归属另一个已安装应用的不算。
 
-#[cfg(any(target_os = "macos", test))]
+// 商店版不带应用管理：卸载要动 /Applications 和别的应用留在 ~/Library 里的数据，沙盒不允许。
+#[cfg(all(any(target_os = "macos", test), not(feature = "appstore")))]
 mod macos;
 #[cfg(any(windows, test))]
 mod registry;
@@ -18,11 +19,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "appstore")))]
 use macos as platform;
 #[cfg(windows)]
 use registry as platform;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(all(target_os = "macos", not(feature = "appstore")), windows)))]
 mod platform {
     use super::{App, Leftover};
     use std::sync::atomic::AtomicBool;
@@ -44,8 +45,11 @@ mod platform {
     }
 }
 
-/// 这个系统上有没有「应用」可管。没有的话界面不该把这一页摆出来。
-pub const SUPPORTED: bool = cfg!(any(target_os = "macos", windows));
+/// 这个系统（和这个版本）上有没有「应用」可管。没有的话界面不该把这一页摆出来。
+pub const SUPPORTED: bool = cfg!(any(
+    all(target_os = "macos", not(feature = "appstore")),
+    windows
+));
 
 /// 卸载是不是「把 .app 移到废纸篓」（macOS）。不是的话（Windows）就是启动应用自带的卸载程序。
 pub const MOVES_TO_TRASH: bool = cfg!(target_os = "macos");
@@ -67,7 +71,7 @@ pub struct App {
     #[cfg_attr(not(windows), allow(dead_code))]
     registered_size: Option<u64>,
     /// 找残留时除了文件名之外也认的名字（`CFBundleName` 等）。
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), feature = "appstore"), allow(dead_code))]
     names: Vec<String>,
     /// Windows：登记的卸载命令。
     #[cfg_attr(not(windows), allow(dead_code))]

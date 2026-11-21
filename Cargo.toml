@@ -9,7 +9,12 @@ edition = "2024"
 rust-version = "1.92"
 license = "MIT"
 authors = ["pc-specs contributors"]
-description = "Cross-platform PC configuration viewer"
+
+# Mac App Store 的构建号（Info.plist 的 CFBundleVersion）：纯数字，每次上传 App Store Connect 都必须比上一次大。
+# 和上面对外显示的版本号是两回事。scripts/macos/appstore.sh 读这个值（BUILD_NUMBER 环境变量可临时覆盖），
+# 用 scripts/version.sh build bump 加一。
+[workspace.metadata.appstore]
+build = 1
 
 # GPUI 与组件库在 Debug 构建下几乎不做优化，`cargo run` 会明显卡顿。
 # 只给框架依赖开优化，应用自身代码仍保持 Debug（编译快、可调试）。

@@ -5,11 +5,13 @@
 
 mod autostart;
 mod bigscreen;
+mod bookmarks;
 mod floating;
 mod fmt;
 mod health;
 mod history;
 mod instance;
+mod links;
 mod menubar;
 mod pages;
 mod poster;
@@ -140,6 +142,8 @@ fn main() {
         .detach();
 
         // 没有托盘就没法再把窗口叫出来，那种情况下即使是开机自启也要开窗口。
+        // macOS 的登录项带不了 `--background`，得趁启动事件还在时问系统。
+        let background = background || autostart::launched_at_login();
         if !(background && state.read(cx).has_tray()) {
             workspace::open_main_window(cx);
         }

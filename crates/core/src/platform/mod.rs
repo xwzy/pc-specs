@@ -8,7 +8,8 @@ pub(crate) mod macos;
 pub(crate) mod macos_cpu;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_net;
-#[cfg(target_os = "macos")]
+// 读 SMC（风扇、功耗、电压、逐核温度）要打开 AppleSMC 的 IOKit 用户客户端，沙盒不让，商店版也不带。
+#[cfg(all(target_os = "macos", not(feature = "appstore")))]
 pub(crate) mod macos_smc;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_vm;
@@ -73,6 +74,12 @@ pub fn process_memory(pid: u32) -> Option<u64> {
     imp::process_memory(pid)
 }
 
+/// 按 pid 查进程名（商店版用，它在沙盒里列不出进程，但可以按 pid 查）。读不到时为 `None`。
+#[cfg(all(target_os = "macos", feature = "appstore"))]
+pub fn process_name(pid: u32) -> Option<String> {
+    macos::process_name(pid)
+}
+
 /// 系统的热压力等级：0 正常、1 中等、2 较重、3 严重、4 休眠。数字大了说明系统已经在压低性能来降温，
 /// 和温度读数互为印证。只有 macOS 提供，其他平台为 `None`。
 pub fn thermal_pressure() -> Option<u8> {
@@ -90,8 +97,10 @@ pub fn memory_breakdown() -> Option<MemoryBreakdown> {
 /// 实时采样里随时间变化的读数：macOS 的 CPU / GPU 逐核温度，以及风扇转速、功率、电压、电流。
 /// 读取要足够便宜才能每隔几秒来一次，所以 Windows 的 WMI 查询不在其列：那边只在整份快照里给一次。
 pub fn live_sensors() -> Vec<SensorReading> {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(feature = "appstore")))]
     return macos_smc::readings();
+    #[cfg(all(target_os = "macos", feature = "appstore"))]
+    return Vec::new();
     #[cfg(target_os = "linux")]
     return imp::extra_sensors();
     #[cfg(target_os = "windows")]

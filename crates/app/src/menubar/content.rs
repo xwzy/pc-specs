@@ -1233,17 +1233,21 @@ fn network_facts(s: &AppState, ink: &Ink) -> Vec<Stat> {
     };
 
     let network = &s.snapshot.network;
-    let mut rows = vec![latency(
-        TargetKind::Internet,
-        t!("net_target_internet").into_owned(),
-        IconName::Globe,
-    )];
-    if network.default_gateway.is_some() {
+    let mut rows = Vec::new();
+    // 商店版不联网，量不了延迟（见 `edition::NETWORK_ACCESS`）。
+    if pc_specs_core::edition::NETWORK_ACCESS {
         rows.push(latency(
-            TargetKind::Gateway,
-            t!("net_target_gateway").into_owned(),
-            IconName::Router,
+            TargetKind::Internet,
+            t!("net_target_internet").into_owned(),
+            IconName::Globe,
         ));
+        if network.default_gateway.is_some() {
+            rows.push(latency(
+                TargetKind::Gateway,
+                t!("net_target_gateway").into_owned(),
+                IconName::Router,
+            ));
+        }
     }
     if network
         .interfaces
@@ -1538,7 +1542,10 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
             if let Some(tick) = tick.filter(|t| !t.cpu_per_core.is_empty()) {
                 out.push(cores(&ink, &tick.cpu_per_core, cx));
             }
-            out.push(processes(s, &ink, ProcessSort::Cpu, side, rows, cx));
+            // 商店版的沙盒里列不出进程（见 `edition::PROCESS_LIST`）。
+            if pc_specs_core::edition::PROCESS_LIST {
+                out.push(processes(s, &ink, ProcessSort::Cpu, side, rows, cx));
+            }
         }
         Metric::Memory => {
             let mut stats = Vec::new();
@@ -1584,7 +1591,10 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
             {
                 out.push(composition(s, &ink, memory));
             }
-            out.push(processes(s, &ink, ProcessSort::Memory, side, rows, cx));
+            // 商店版的沙盒里列不出进程（见 `edition::PROCESS_LIST`）。
+            if pc_specs_core::edition::PROCESS_LIST {
+                out.push(processes(s, &ink, ProcessSort::Memory, side, rows, cx));
+            }
         }
         Metric::Storage => {
             let mut stats = Vec::new();
@@ -1654,7 +1664,10 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                     block
                 });
             }
-            out.push(processes(s, &ink, ProcessSort::Io, side, rows, cx));
+            // 商店版的沙盒里列不出进程（见 `edition::PROCESS_LIST`）。
+            if pc_specs_core::edition::PROCESS_LIST {
+                out.push(processes(s, &ink, ProcessSort::Io, side, rows, cx));
+            }
         }
         Metric::Temperature => {
             let list = temperatures(s);
@@ -1824,7 +1837,10 @@ pub fn blocks(s: &AppState, metric: Metric, side: Side, rows: usize, cx: &App) -
                 NET_FLOOR,
                 cx,
             ));
-            out.push(processes(s, &ink, ProcessSort::Net, side, rows, cx));
+            // 商店版的沙盒里认不出哪个进程在收发数据（见 `edition::PROCESS_LIST`）。
+            if pc_specs_core::edition::PROCESS_LIST {
+                out.push(processes(s, &ink, ProcessSort::Net, side, rows, cx));
+            }
         }
         Metric::Gpu => {
             let info = s.snapshot.gpus.first();

@@ -1,6 +1,8 @@
 # PC Specs · UI 设计文档
 
 > 与 `design.md` / `tech.md` 配套。本文档定义视觉风格、布局栅格、配色、字体、组件库、典型页面线框、交互动效、响应式。
+>
+> **早期设计稿**：文中的组件库、图标库（lucide-react）和应用 Logo 描述已过时——界面现在用 GPUI Kit 实现，Logo 见 `assets/icons/`，现状请以 `README.md` 和代码为准。
 
 ---
 

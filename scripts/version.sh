@@ -11,8 +11,12 @@
 #   scripts/version.sh bump <patch|minor|major>
 #   scripts/version.sh tag                  打印发布用的 Git tag（v<版本>）
 #   scripts/version.sh check                校验版本只有一个来源、Cargo.lock 已同步（发布流程会跑）
+#   scripts/version.sh build [bump|set <数字>]   Mac App Store 的构建号：查看 / 加一 / 指定。每次上传 App Store Connect
+#                                           都必须比上一次大，和对外显示的版本号分开，存在根 Cargo.toml 的
+#                                           [workspace.metadata.appstore].build
 #
 # 发版流程：scripts/version.sh set 0.3.0 → 提交并推送 → GitHub 上手动运行 Release 工作流。
+# 上架 Mac App Store：scripts/version.sh build bump → scripts/macos/appstore.sh upload。
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
@@ -66,6 +70,30 @@ bump_version() {
   set_version "$core"
 }
 
+set_build() {
+  local new="$1" manifest="$ROOT/Cargo.toml" tmp
+  case "$new" in
+    '' | *[!0-9]* | 0*) die "构建号必须是不以 0 开头的正整数：${new}" ;;
+  esac
+  tmp="$(mktemp)"
+  awk -v n="$new" '
+    /^\[/ { section = $0 }
+    section == "[workspace.metadata.appstore]" && /^build[[:space:]]*=/ && !done {
+      print "build = " n
+      done = 1
+      next
+    }
+    { print }
+    END { if (!done) exit 3 }
+  ' "$manifest" > "$tmp" || {
+    rm -f "$tmp"
+    die "根 Cargo.toml 里没有 [workspace.metadata.appstore] 的 build"
+  }
+  cat "$tmp" > "$manifest"
+  rm -f "$tmp"
+  log "构建号已改为 ${new}（Cargo.toml）"
+}
+
 check_version() {
   local version manifest bad=0
   version="$(app_version)"
@@ -88,6 +116,9 @@ check_version() {
   (cd "$ROOT" && cargo update --workspace --locked > /dev/null 2>&1) \
     || die "Cargo.lock 与 Cargo.toml 的版本不一致，运行 scripts/version.sh set ${version} 同步"
 
+  # 商店版的构建号必须是合法的正整数（BUILD_NUMBER 环境变量不算，只看文件里的）。
+  (unset BUILD_NUMBER && app_build_number > /dev/null)
+
   log "版本 ${version}：唯一来源正确，Cargo.lock 已同步"
 }
 
@@ -102,6 +133,17 @@ case "${1:-get}" in
     bump_version "$2"
     ;;
   tag) printf 'v%s\n' "$(app_version)" ;;
+  build)
+    case "${2:-get}" in
+      get) (unset BUILD_NUMBER && app_build_number) && printf '\n' ;;
+      bump) set_build "$(($(unset BUILD_NUMBER && app_build_number) + 1))" ;;
+      set)
+        [ $# -eq 3 ] || die "用法：scripts/version.sh build set <数字>"
+        set_build "$3"
+        ;;
+      *) die "用法：scripts/version.sh build [bump | set <数字>]" ;;
+    esac
+    ;;
   check) check_version ;;
   -h | --help | help) sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
   *) die "未知命令：$1（试试 --help）" ;;

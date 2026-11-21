@@ -248,14 +248,41 @@ fn read_default_gateway_v6() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn read_default_gateway() -> Option<String> {
-    let text = run_stdout_timeout(
+    run_stdout_timeout(
         "/sbin/route",
         &["-n", "get", "default"],
         Duration::from_secs(3),
-    )?;
-    text.lines().find_map(|l| {
-        let v = l.trim().strip_prefix("gateway:")?.trim();
-        (!v.is_empty()).then(|| v.to_string())
+    )
+    .and_then(|text| {
+        text.lines().find_map(|l| {
+            let v = l.trim().strip_prefix("gateway:")?.trim();
+            (!v.is_empty()).then(|| v.to_string())
+        })
+    })
+    // 沙盒里的应用不能向路由套接字发请求（商店版就是这样），`route` 会失败，退回去读路由表。
+    .or_else(|| {
+        let table = run_stdout_timeout(
+            "/usr/sbin/netstat",
+            &["-rn", "-f", "inet"],
+            Duration::from_secs(3),
+        )?;
+        default_gateway_from_table(&table)
+    })
+}
+
+/// 从 `netstat -rn -f inet` 的输出里找默认网关：`default` 那一行的第二列，标志里要有 `U`（可用）
+/// 和 `G`（经网关），没有 `I`（只对绑定了网卡的程序生效，比如 VPN 之外的备用路由）；
+/// 第二列是 `link#N` 这种直连记录的不算。
+#[cfg(any(target_os = "macos", test))]
+fn default_gateway_from_table(table: &str) -> Option<String> {
+    table.lines().find_map(|line| {
+        let mut columns = line.split_whitespace();
+        if columns.next()? != "default" {
+            return None;
+        }
+        let (gateway, flags) = (columns.next()?, columns.next()?);
+        let usable = flags.contains('U') && flags.contains('G') && !flags.contains('I');
+        (usable && gateway.parse::<std::net::Ipv4Addr>().is_ok()).then(|| gateway.to_string())
     })
 }
 
@@ -400,6 +427,7 @@ fn read_dns_servers() -> Vec<String> {
 /// - HTTPS（rustls），不依赖系统 OpenSSL。
 /// - 多个备用端点，首个返回合法 IP 字面量的即采用，避免被 captive portal 注入的 HTML 污染。
 /// - 单个端点总超时 4 秒。
+#[cfg(not(feature = "appstore"))]
 pub fn fetch_public_ip() -> Option<String> {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(4)))
@@ -419,4 +447,41 @@ pub fn fetch_public_ip() -> Option<String> {
             .is_ok()
             .then(|| ip.to_string())
     })
+}
+
+/// 商店版不联网（没有网络权限，也不带 TLS 库），界面不提供公网 IP；留个同样签名的空壳免得上层写条件编译。
+#[cfg(feature = "appstore")]
+pub fn fetch_public_ip() -> Option<String> {
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_gateway_from_table;
+
+    #[test]
+    fn default_gateway_is_read_from_the_routing_table() {
+        let table = "Routing tables
+
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            192.168.5.1        UGScg                 en0       
+default            link#25            UCSIg               utun4       
+1                  198.18.0.1         UGSc                utun4       
+127                127.0.0.1          UCS                   lo0       
+";
+        assert_eq!(
+            default_gateway_from_table(table).as_deref(),
+            Some("192.168.5.1")
+        );
+    }
+
+    #[test]
+    fn interface_scoped_and_direct_default_routes_are_not_gateways() {
+        let table = "default            10.0.0.1           UGScIg                en1       
+default            link#25            UCSg                utun4       
+";
+        assert_eq!(default_gateway_from_table(table), None);
+        assert_eq!(default_gateway_from_table(""), None);
+    }
 }
