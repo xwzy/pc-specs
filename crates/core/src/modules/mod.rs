@@ -19,6 +19,12 @@ use crate::model::{
     BatteryInfo, CpuInfo, DevEnvInfo, DisplayInfo, GpuInfo, HostInfo, MemoryInfo, MotherboardInfo,
     NetworkInfo, OsInfo, PeripheralInfo, SensorReading, StorageInfo, SystemSnapshot,
 };
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::{
+    LazyLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 /// 快照由这些相互独立的模块组成。界面可以逐个模块采集，哪个先完成就先展示。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -94,13 +100,51 @@ pub enum ModuleData {
 /// 采集单个模块。阻塞调用，请放在后台线程。
 ///
 /// 采集代码要和各平台的系统接口、外部命令的输出打交道，任何一处意料之外都可能 panic。
-/// 这里把它挡在模块边界上，按「什么都没采到」处理：一个模块出错不该影响其它模块，
+/// 这里把它挡在模块边界上，保留上一份结果（首次失败时返回空值）：一个模块出错不该影响其它模块，
 /// 更不该让整轮刷新停在半路。
 pub fn collect(module: Module) -> ModuleData {
-    crate::util::guarded(&format!("{module:?} collection"), || {
-        collect_unchecked(module)
-    })
-    .unwrap_or_else(|| empty(module))
+    static SLOTS: LazyLock<HashMap<Module, CollectionSlot>> = LazyLock::new(|| {
+        Module::ALL
+            .into_iter()
+            .chain([Module::DevEnv, Module::Sensors])
+            .map(|module| (module, CollectionSlot::default()))
+            .collect()
+    });
+    SLOTS[&module].collect(module, || collect_unchecked(module))
+}
+
+/// A timeout cannot interrupt a blocked OS call. Keep one in-flight collector per
+/// module across UI refreshes and HTTP requests; retries reuse its last result.
+#[derive(Default)]
+struct CollectionSlot {
+    running: AtomicBool,
+    cached: Mutex<Option<ModuleData>>,
+}
+
+impl CollectionSlot {
+    fn collect(&self, module: Module, work: impl FnOnce() -> ModuleData) -> ModuleData {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return self.cached.lock().clone().unwrap_or_else(|| empty(module));
+        }
+        struct Release<'a>(&'a AtomicBool);
+        impl Drop for Release<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _release = Release(&self.running);
+        match crate::util::guarded(&format!("{module:?} collection"), work) {
+            Some(data) => {
+                *self.cached.lock() = Some(data.clone());
+                data
+            }
+            None => self.cached.lock().clone().unwrap_or_else(|| empty(module)),
+        }
+    }
 }
 
 fn empty(module: Module) -> ModuleData {
@@ -207,4 +251,71 @@ pub fn collect_snapshot() -> SystemSnapshot {
     snapshot.merge_tick(&sampler.sample());
     snapshot.timestamp = crate::util::now_ms();
     snapshot
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, mpsc};
+
+    fn result(name: &str) -> ModuleData {
+        ModuleData::Os(OsInfo {
+            name: name.into(),
+            ..Default::default()
+        })
+    }
+
+    fn name(data: ModuleData) -> String {
+        let ModuleData::Os(os) = data else {
+            panic!("wrong module")
+        };
+        os.name
+    }
+
+    #[test]
+    fn stuck_collection_retries_use_cache_without_starting_more_collectors() {
+        let slot = Arc::new(CollectionSlot::default());
+        slot.collect(Module::Os, || result("cached"));
+        let (started, ready) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let worker_slot = slot.clone();
+        let worker = std::thread::spawn(move || {
+            worker_slot.collect(Module::Os, || {
+                started.send(()).unwrap();
+                wait.recv().unwrap();
+                result("updated")
+            })
+        });
+        ready
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        for _ in 0..10_000 {
+            assert_eq!(
+                name(slot.collect(Module::Os, || {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    result("overlapping")
+                })),
+                "cached"
+            );
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        release.send(()).unwrap();
+        assert_eq!(name(worker.join().unwrap()), "updated");
+        assert_eq!(name(slot.collect(Module::Os, || result("next"))), "next");
+    }
+
+    #[test]
+    fn panic_keeps_last_result_and_releases_the_collection_slot() {
+        let slot = CollectionSlot::default();
+        slot.collect(Module::Os, || result("cached"));
+        assert_eq!(
+            name(slot.collect(Module::Os, || panic!("injected failure"))),
+            "cached"
+        );
+        assert_eq!(
+            name(slot.collect(Module::Os, || result("recovered"))),
+            "recovered"
+        );
+    }
 }

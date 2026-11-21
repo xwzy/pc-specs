@@ -42,6 +42,16 @@ pub(super) struct Cleaner {
     epoch: u64,
     /// 用户对每一类勾选过的选择；重新量、一类消失又出现之后，还是他上次选的样子。
     chosen: HashMap<Kind, bool>,
+    measure_cancel: Arc<AtomicBool>,
+}
+
+impl Drop for Cleaner {
+    fn drop(&mut self) {
+        self.measure_cancel.store(true, Ordering::Relaxed);
+        if let Phase::Cleaning(run) = &self.phase {
+            run.cancel.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 /// 一类东西。
@@ -159,16 +169,21 @@ impl StoragePage {
         }
         self.cleaner.epoch += 1;
         let epoch = self.cleaner.epoch;
-        let (tx, rx) = async_channel::unbounded();
+        let (tx, rx) = async_channel::bounded(16);
+        self.cleaner.measure_cancel.store(true, Ordering::Relaxed);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cleaner.measure_cancel = cancel.clone();
         let started = spawn_thread("pc-specs-clean-measure", move || {
             let _ = guarded("clean measure", || {
-                let never = AtomicBool::new(false);
                 let specs = clean::specs();
                 if tx.send_blocking(Event::Found(specs.clone())).is_err() {
                     return;
                 }
                 for spec in &specs {
-                    let measured = clean::measure(spec, &never);
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let measured = clean::measure(spec, &cancel);
                     if tx
                         .send_blocking(Event::Measured(spec.kind, measured))
                         .is_err()
@@ -177,12 +192,12 @@ impl StoragePage {
                     }
                 }
                 // 项目里的构建产物放在最后：先找出在哪（几秒），再量（可能是几百 GB，要一两分钟）。
-                let projects = clean::projects(&never);
+                let projects = clean::projects(&cancel);
                 if tx.send_blocking(Event::Projects(projects.clone())).is_err() {
                     return;
                 }
                 if let Some(spec) = projects {
-                    let measured = clean::measure(&spec, &never);
+                    let measured = clean::measure(&spec, &cancel);
                     let _ = tx.send_blocking(Event::Measured(spec.kind, measured));
                 }
             });

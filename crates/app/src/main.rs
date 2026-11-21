@@ -4,6 +4,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod autostart;
+mod background;
 mod bigscreen;
 mod bookmarks;
 mod floating;
@@ -101,7 +102,7 @@ fn main() {
     let background = std::env::args().any(|arg| arg == autostart::BACKGROUND_ARG);
 
     // 每个用户只留一个实例：已经有人在跑就把它叫醒（开机自启的那份不打扰用户）然后退出。
-    let (wake_tx, wake_rx) = async_channel::unbounded::<()>();
+    let (wake_tx, wake_rx) = async_channel::bounded::<()>(1);
     let Some(_instance) = instance::acquire(wake_tx, !background) else {
         return;
     };

@@ -138,7 +138,7 @@ jobs:
             exit 1
           fi
 
-  # 发布前先跑测试。采集层有按平台分开的代码，菜单栏位图的渲染测试又只在 macOS 上有意义，所以两个系统各跑一遍。
+  # 三个平台原生跑测试；macOS 另外覆盖商店版，避免只编译不验证后台行为。
   test:
     name: Test (${{ matrix.os }})
     needs: prepare
@@ -147,16 +147,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15]
+        os: [ubuntu-22.04, macos-15, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - if: ${{ runner.os == 'Linux' }}
         run: scripts/linux/install-deps.sh
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           key: test-${{ matrix.os }}
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - if: ${{ runner.os == 'macOS' }}
+        run: cargo test --workspace --no-default-features --features appstore --locked
 
   build-macos:
     name: macOS universal

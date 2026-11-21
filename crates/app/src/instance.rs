@@ -4,7 +4,7 @@
 //! 同时在回环地址上随机监听一个端口，把端口号写进 `instance.port`；后启动的读到端口连上去，
 //! 对方收到连接就是「请显示窗口」。端口单独存一个文件，因为 Windows 上被锁住的文件别的进程读不了。
 //!
-//! 单实例是尽力而为的：锁文件打不开、文件系统不支持锁、叫不醒对方，都照常启动，不拦着用户。
+//! 锁文件打不开、文件系统不支持锁时尽力启动；已有实例持锁时始终退出，避免重复后台采集。
 
 use pc_specs_core::edition;
 use std::fs::{File, OpenOptions, TryLockError};
@@ -59,9 +59,8 @@ pub fn acquire(wake: async_channel::Sender<()>, wake_existing: bool) -> Option<I
         Err(TryLockError::WouldBlock) => {
             if wake_existing && !edition::SANDBOXED && !wake_running(&dir) {
                 tracing::warn!(
-                    "another instance holds the lock but didn't answer, starting anyway"
+                    "another instance holds the lock but didn't answer the wake request"
                 );
-                return Instance::untracked();
             }
             None
         }
@@ -89,8 +88,16 @@ fn listen(dir: &Path, wake: async_channel::Sender<()>) {
         .name("pc-specs-instance".into())
         .spawn(move || {
             for connection in listener.incoming() {
-                if connection.is_ok() && wake.send_blocking(()).is_err() {
-                    break;
+                match connection {
+                    Ok(_) => match wake.try_send(()) {
+                        Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
+                        Err(async_channel::TrySendError::Closed(())) => break,
+                    },
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        tracing::warn!("instance listener stopped: {e}");
+                        break;
+                    }
                 }
             }
         });

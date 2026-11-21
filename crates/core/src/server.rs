@@ -28,6 +28,7 @@ use axum::{
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::future::IntoFuture as _;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -47,6 +48,7 @@ const METRICS_TTL: Duration = Duration::from_millis(800);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// 请求体上限 64KiB —— 所有端点都只接受很小的 JSON。
 const MAX_BODY_BYTES: usize = 64 * 1024;
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// 服务当前状态，供设置页展示。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,11 +173,22 @@ async fn serve(
     let listener = tokio::net::TcpListener::bind(addr).await?;
     *status.lock() = ServerStatus::Listening(listener.local_addr()?);
     tracing::info!(%addr, "local http server listening");
-    axum::serve(listener, router)
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let serving = axum::serve(listener, router)
         .with_graceful_shutdown(async move {
-            let _ = shutdown.await;
+            let _ = stopped.await;
         })
-        .await
+        .into_future();
+    tokio::pin!(serving);
+    tokio::select! {
+        result = &mut serving => result,
+        _ = shutdown => {
+            let _ = stop.send(());
+            // Idle keep-alive clients and incomplete request bodies must not
+            // prevent settings changes or application shutdown forever.
+            tokio::time::timeout(SHUTDOWN_GRACE, serving).await.unwrap_or(Ok(()))
+        }
+    }
 }
 
 // ---------- State ---------------------------------------------------------
@@ -184,7 +197,8 @@ struct ServerState {
     started_at: Instant,
     /// Snapshot 缓存（原子刷新 + single-flight）。`Arc` 让多次请求只增加引用计数。
     snapshot_cache: Mutex<Option<(Instant, Arc<SystemSnapshot>)>>,
-    snapshot_refresh_lock: AsyncMutex<()>,
+    snapshot_refresh_lock: Arc<AsyncMutex<()>>,
+    info_slots: Arc<tokio::sync::Semaphore>,
     /// 首个 metrics 请求到来时才创建，没有请求就不占任何资源。
     sampler: OnceLock<Option<SamplerWorker>>,
     metrics_cache: Mutex<Option<(Instant, Arc<LightMetrics>)>>,
@@ -196,7 +210,8 @@ impl ServerState {
         Self {
             started_at: Instant::now(),
             snapshot_cache: Mutex::new(None),
-            snapshot_refresh_lock: AsyncMutex::new(()),
+            snapshot_refresh_lock: Arc::new(AsyncMutex::new(())),
+            info_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             sampler: OnceLock::new(),
             metrics_cache: Mutex::new(None),
             metrics_refresh_lock: AsyncMutex::new(()),
@@ -207,19 +222,22 @@ impl ServerState {
 /// 采样器只在自己的线程里使用：Windows 上 sysinfo 的 GPU 性能计数器句柄不是 `Send`，
 /// 不能放进多线程共享的状态。请求通过 channel 送过去，结果通过 oneshot 送回来。
 struct SamplerWorker {
-    requests: std::sync::mpsc::Sender<tokio::sync::oneshot::Sender<MonitorTick>>,
+    requests: std::sync::mpsc::SyncSender<tokio::sync::oneshot::Sender<MonitorTick>>,
 }
 
 impl SamplerWorker {
     fn start() -> Option<Self> {
         let (requests, inbox) =
-            std::sync::mpsc::channel::<tokio::sync::oneshot::Sender<MonitorTick>>();
+            std::sync::mpsc::sync_channel::<tokio::sync::oneshot::Sender<MonitorTick>>(1);
         std::thread::Builder::new()
             .name("pc-specs-sampler".to_string())
             .spawn(move || {
                 let mut sampler: Option<Sampler> = None;
                 // 服务关闭、`requests` 被丢弃后 recv 返回 Err，线程随之退出。
                 while let Ok(reply) = inbox.recv() {
+                    if reply.is_closed() {
+                        continue;
+                    }
                     if sampler.is_none() {
                         sampler = guarded("http sampler init", Sampler::new);
                     }
@@ -242,7 +260,7 @@ impl SamplerWorker {
 
     async fn sample(&self) -> Option<MonitorTick> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.requests.send(tx).ok()?;
+        self.requests.try_send(tx).ok()?;
         rx.await.ok()
     }
 }
@@ -352,8 +370,20 @@ async fn post_health(state: State<Arc<ServerState>>) -> Json<HealthResponse> {
 
 async fn post_info(State(state): State<Arc<ServerState>>) -> Response {
     // host / os 都是廉价采集，不需要走 snapshot 缓存。
-    let result =
-        tokio::task::spawn_blocking(|| (modules::host::collect(), modules::os::collect())).await;
+    let Ok(slot) = state.info_slots.clone().try_acquire_owned() else {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "info collection busy");
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        let modules::ModuleData::Host(host) = modules::collect(modules::Module::Host) else {
+            unreachable!()
+        };
+        let modules::ModuleData::Os(os) = modules::collect(modules::Module::Os) else {
+            unreachable!()
+        };
+        (host, os)
+    })
+    .await;
     match result {
         Ok((host, os)) => Json(ApiInfoResponse {
             hostname: host.hostname,
@@ -446,20 +476,32 @@ section_endpoint!(post_dev_env, DevEnvInfo, |s: &SystemSnapshot| s
 // ---------- snapshot 缓存 -------------------------------------------------
 
 async fn snapshot_cached(state: &Arc<ServerState>) -> Result<Arc<SystemSnapshot>, String> {
+    snapshot_cached_with(state, modules::collect_snapshot).await
+}
+
+async fn snapshot_cached_with(
+    state: &Arc<ServerState>,
+    collect: impl FnOnce() -> SystemSnapshot + Send + 'static,
+) -> Result<Arc<SystemSnapshot>, String> {
     if let Some(s) = read_fresh_snapshot(state) {
         return Ok(s);
     }
     // 同一时间只允许一个请求触发采集，其余等待并复用结果。
-    let _guard = state.snapshot_refresh_lock.lock().await;
+    let guard = state.snapshot_refresh_lock.clone().lock_owned().await;
     if let Some(s) = read_fresh_snapshot(state) {
         return Ok(s);
     }
-    let snap = tokio::task::spawn_blocking(modules::collect_snapshot)
-        .await
-        .map_err(|e| format!("snapshot collect join error: {e}"))?;
-    let snap = Arc::new(snap);
-    *state.snapshot_cache.lock() = Some((Instant::now(), snap.clone()));
-    Ok(snap)
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        // Keep the lock until the OS calls actually finish, even if the HTTP
+        // handler is cancelled. Cancellation does not stop spawn_blocking.
+        let _guard = guard;
+        let snap = Arc::new(collect());
+        *state.snapshot_cache.lock() = Some((Instant::now(), snap.clone()));
+        snap
+    })
+    .await
+    .map_err(|e| format!("snapshot collect join error: {e}"))
 }
 
 fn read_fresh_snapshot(state: &ServerState) -> Option<Arc<SystemSnapshot>> {
@@ -521,6 +563,80 @@ fn read_fresh_metrics(state: &ServerState) -> Option<Arc<LightMetrics>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_snapshot_requests_do_not_start_overlapping_collections() {
+        let state = Arc::new(ServerState::new());
+        let first_state = state.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let first = tokio::spawn(async move {
+            snapshot_cached_with(&first_state, move || {
+                let _ = started.send(());
+                wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                SystemSnapshot {
+                    timestamp: 42,
+                    ..Default::default()
+                }
+            })
+            .await
+        });
+        ready.await.unwrap();
+        first.abort();
+        let _ = first.await;
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(30),
+                snapshot_cached_with(&state, || panic!(
+                    "cancelled handler released the collection lock too early"
+                ))
+            )
+            .await
+            .is_err()
+        );
+        release.send(()).unwrap();
+        let result = snapshot_cached_with(&state, || panic!("completed result was not cached"))
+            .await
+            .unwrap();
+        assert_eq!(result.timestamp, 42);
+    }
+
+    #[tokio::test]
+    async fn stalled_sampler_has_only_one_pending_request() {
+        let (requests, inbox) = std::sync::mpsc::sync_channel(1);
+        let worker = SamplerWorker { requests };
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), worker.sample())
+                .await
+                .is_err()
+        );
+        for _ in 0..1000 {
+            assert!(worker.sample().await.is_none());
+        }
+        assert!(inbox.try_recv().unwrap().is_closed());
+        assert!(inbox.try_recv().is_err());
+    }
+
+    #[test]
+    fn shutdown_finishes_with_an_incomplete_http_request() {
+        use std::io::Write as _;
+        let server = spawn("127.0.0.1:0".parse().unwrap());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let addr = loop {
+            match server.status() {
+                ServerStatus::Listening(addr) => break addr,
+                ServerStatus::Failed(error) => panic!("{error}"),
+                _ => assert!(Instant::now() < deadline),
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        stream.write_all(b"POST /api/v1/snapshot HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 10000\r\n\r\n{").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let began = Instant::now();
+        drop(server);
+        assert!(began.elapsed() < Duration::from_secs(5));
+    }
 
     #[tokio::test]
     async fn concurrent_metrics_requests_share_a_valid_first_sample() {

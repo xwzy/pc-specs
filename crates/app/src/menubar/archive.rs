@@ -25,7 +25,7 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 曲线条数，也是文件里的列数。
@@ -295,7 +295,7 @@ pub struct Archive {
     tiers: [Tier; 2],
     persist: bool,
     dir: Option<PathBuf>,
-    writer: Option<mpsc::Sender<Job>>,
+    writer: Option<HistoryWriter>,
     /// 每档的文件现在多大，后台线程写完更新。
     sizes: Arc<[AtomicU64; 2]>,
 }
@@ -310,6 +310,33 @@ enum Job {
     Remove(Vec<PathBuf>),
     /// 排在它前面的活都干完了。
     Done(mpsc::Sender<()>),
+}
+
+/// Coalesce pending writes instead of accumulating whole history snapshots when
+/// storage is slow. There are at most two saves, one removal and one barrier.
+struct HistoryWriter {
+    wake: mpsc::SyncSender<()>,
+    pending: Arc<Mutex<VecDeque<Job>>>,
+}
+
+impl HistoryWriter {
+    fn send(&self, job: Job) -> bool {
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.retain(|old| match (&job, old) {
+            (Job::Save { tier, .. }, Job::Save { tier: old, .. }) => tier != old,
+            (Job::Remove(_), Job::Save { .. } | Job::Remove(_)) => false,
+            (Job::Done(_), Job::Done(_)) => false,
+            _ => true,
+        });
+        pending.push_back(job);
+        match self.wake.try_send(()) {
+            Ok(()) | Err(mpsc::TrySendError::Full(())) => true,
+            Err(mpsc::TrySendError::Disconnected(())) => {
+                pending.clear();
+                false
+            }
+        }
+    }
 }
 
 pub fn now_ms() -> u64 {
@@ -373,13 +400,15 @@ impl Archive {
         if self.writer.is_some() {
             return;
         }
-        let (jobs, work) = mpsc::channel();
+        let (wake, work) = mpsc::sync_channel(1);
+        let pending = Arc::new(Mutex::new(VecDeque::new()));
+        let queue = pending.clone();
         let sizes = self.sizes.clone();
         let started = std::thread::Builder::new()
             .name("pc-specs-history".into())
-            .spawn(move || run_writer(work, sizes));
+            .spawn(move || run_writer(work, queue, sizes));
         match started {
-            Ok(_) => self.writer = Some(jobs),
+            Ok(_) => self.writer = Some(HistoryWriter { wake, pending }),
             Err(e) => tracing::error!("failed to start the history thread: {e}"),
         }
     }
@@ -406,9 +435,8 @@ impl Archive {
             if !pending || !(force || tier.saved.elapsed() >= tier.spec.every) {
                 continue;
             }
-            tier.dirty = false;
             tier.saved = Instant::now();
-            let _ = writer.send(Job::Save {
+            tier.dirty = !writer.send(Job::Save {
                 tier: index,
                 path: dir.join(tier.spec.file),
                 width: tier.spec.width,
@@ -521,36 +549,47 @@ impl Archive {
         self.flush(true);
         let Some(writer) = &self.writer else { return };
         let (ack, done) = mpsc::channel();
-        if writer.send(Job::Done(ack)).is_ok() {
+        if writer.send(Job::Done(ack)) {
             let _ = done.recv_timeout(SHUTDOWN_WAIT);
         }
     }
 }
 
-fn run_writer(jobs: mpsc::Receiver<Job>, sizes: Arc<[AtomicU64; 2]>) {
-    while let Ok(job) = jobs.recv() {
-        guarded("history writer", || match job {
-            Job::Save {
-                tier,
-                path,
-                width,
-                ring,
-            } => match encode(width, &ring).and_then(|bytes| write(&path, &bytes)) {
-                Ok(size) => sizes[tier].store(size, Ordering::Relaxed),
-                Err(e) => tracing::warn!("failed to save history to {}: {e}", path.display()),
-            },
-            Job::Remove(paths) => {
-                for path in &paths {
-                    remove(path);
+fn run_writer(
+    wake: mpsc::Receiver<()>,
+    pending: Arc<Mutex<VecDeque<Job>>>,
+    sizes: Arc<[AtomicU64; 2]>,
+) {
+    while wake.recv().is_ok() {
+        loop {
+            let job = pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .pop_front();
+            let Some(job) = job else { break };
+            guarded("history writer", || match job {
+                Job::Save {
+                    tier,
+                    path,
+                    width,
+                    ring,
+                } => match encode(width, &ring).and_then(|bytes| write(&path, &bytes)) {
+                    Ok(size) => sizes[tier].store(size, Ordering::Relaxed),
+                    Err(e) => tracing::warn!("failed to save history to {}: {e}", path.display()),
+                },
+                Job::Remove(paths) => {
+                    for path in &paths {
+                        remove(path);
+                    }
+                    for size in sizes.iter() {
+                        size.store(0, Ordering::Relaxed);
+                    }
                 }
-                for size in sizes.iter() {
-                    size.store(0, Ordering::Relaxed);
+                Job::Done(ack) => {
+                    let _ = ack.send(());
                 }
-            }
-            Job::Done(ack) => {
-                let _ = ack.send(());
-            }
-        });
+            });
+        }
     }
 }
 
@@ -686,5 +725,92 @@ fn sweep(dir: &Path, keep: bool) {
         if !known || !keep || oversized {
             let _ = std::fs::remove_file(entry.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stalled_writer_coalesces_snapshots_and_preserves_remove_order() {
+        let (wake, _receiver) = mpsc::sync_channel(1);
+        let pending = Arc::new(Mutex::new(VecDeque::new()));
+        let writer = HistoryWriter {
+            wake,
+            pending: pending.clone(),
+        };
+        for slot in 0..10_000 {
+            for tier in 0..2 {
+                let mut ring = Ring::new(1);
+                ring.put(slot, EMPTY);
+                assert!(writer.send(Job::Save {
+                    tier,
+                    path: PathBuf::new(),
+                    width: 60_000,
+                    ring
+                }));
+            }
+        }
+        let queue = pending.lock().unwrap();
+        assert_eq!(queue.len(), 2);
+        for job in queue.iter() {
+            let Job::Save { ring, .. } = job else {
+                panic!("expected a save")
+            };
+            assert_eq!(ring.first, 9999);
+        }
+        drop(queue);
+        assert!(writer.send(Job::Remove(Vec::new())));
+        assert_eq!(pending.lock().unwrap().len(), 1);
+        assert!(writer.send(Job::Save {
+            tier: 0,
+            path: PathBuf::new(),
+            width: 60_000,
+            ring: Ring::new(1)
+        }));
+        assert!(matches!(
+            pending.lock().unwrap().front(),
+            Some(Job::Remove(_))
+        ));
+    }
+
+    #[test]
+    fn compressed_history_round_trips_and_rejects_corrupt_data() {
+        let spec = &TIERS[0];
+        let mut tier = Tier::new(spec);
+        tier.add(60_000, &[Some(42.0); N]);
+        tier.add(120_000, &[Some(57.0); N]);
+        tier.seal();
+        let bytes = encode(spec.width, &tier.ring).unwrap();
+        let ring = decode(&bytes, spec).unwrap();
+        assert_eq!(ring.first, tier.ring.first);
+        assert_eq!(ring.cells.len(), 2);
+        assert_eq!(ring.cells[0].avg, tier.ring.cells[0].avg);
+        assert_eq!(ring.cells[1].peak, tier.ring.cells[1].peak);
+        assert!(decode(&bytes[..HEADER], spec).is_none());
+    }
+
+    #[test]
+    fn shutdown_persists_the_open_bucket_and_disabling_removes_it() {
+        let dir = std::env::temp_dir().join(format!(
+            "pc-specs-archive-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let now = now_ms();
+        let mut archive = Archive::open_in(Some(dir.clone()), true, now);
+        archive.record(now, |_| Some(42.0));
+        archive.shutdown();
+        let mut loaded = Archive::open_in(Some(dir.clone()), true, now);
+        assert_eq!(loaded.tiers[0].ring.cells.len(), 1);
+        assert!(loaded.disk_bytes() > 0);
+        loaded.set_persist(false);
+        loaded.shutdown();
+        assert_eq!(loaded.disk_bytes(), 0);
+        assert!(TIERS.iter().all(|tier| !dir.join(tier.file).exists()));
+        drop(loaded);
+        drop(archive);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

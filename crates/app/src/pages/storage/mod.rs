@@ -88,6 +88,12 @@ struct Running {
     expected: u64,
 }
 
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
 enum Scan {
     Idle,
     Running(Running),

@@ -170,7 +170,7 @@ impl Sampler {
             disks,
             gpus: Gpus::new_with_refreshed_list().ok(),
             #[cfg(not(feature = "appstore"))]
-            components: Components::new_with_refreshed_list().ok(),
+            components: None,
             net_kinds: HashMap::new(),
             temperatures: Vec::new(),
             other_sensors: Vec::new(),
@@ -217,18 +217,26 @@ impl Sampler {
             ..Default::default()
         };
 
+        #[cfg(target_os = "macos")]
+        let native_usage = self.cpu_load.sample();
         if let Some(sys) = self.system.as_mut() {
-            sys.refresh_cpu_specifics(CpuRefreshKind::nothing().with_usage());
+            #[cfg(target_os = "macos")]
+            let needs_cpu = native_usage.is_none();
+            #[cfg(not(target_os = "macos"))]
+            let needs_cpu = true;
+            if needs_cpu {
+                sys.refresh_cpu_specifics(CpuRefreshKind::nothing().with_usage());
+                tick.cpu_per_core = sys.cpus().iter().map(|c| c.usage()).collect();
+                tick.cpu_overall = cpu::overall_usage(sys.global_cpu_usage(), &tick.cpu_per_core);
+            }
             sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram().with_swap());
-            tick.cpu_per_core = sys.cpus().iter().map(|c| c.usage()).collect();
-            tick.cpu_overall = cpu::overall_usage(sys.global_cpu_usage(), &tick.cpu_per_core);
             tick.mem_used_bytes = sys.used_memory();
             tick.mem_total_bytes = sys.total_memory();
             tick.swap_used_bytes = sys.used_swap();
             tick.swap_total_bytes = sys.total_swap();
         }
         #[cfg(target_os = "macos")]
-        if let Some(usage) = self.cpu_load.sample() {
+        if let Some(usage) = native_usage {
             tick.cpu_per_core = usage.per_core;
             tick.cpu_overall = usage.overall;
         }
@@ -254,8 +262,13 @@ impl Sampler {
         tick.load_average = load_average();
 
         if let Some(interfaces) = self.read_networks() {
+            // VPN and container interfaces can be created indefinitely during a
+            // long session. Cache classifications only for current interfaces.
+            self.net_kinds
+                .retain(|name, _| interfaces.iter().any(|(current, _, _)| current == name));
             let (mut rx_counted, mut tx_counted) = (0u64, 0u64);
             let (mut rx_any, mut tx_any) = (0u64, 0u64);
+            let mut has_physical = false;
             tick.per_interface.reserve(interfaces.len());
             for (name, rx, tx) in interfaces {
                 let kind = match self.net_kinds.get(name.as_str()) {
@@ -271,6 +284,7 @@ impl Sampler {
                     tx_any = tx_any.saturating_add(tx);
                     // 虚拟接口（docker 网桥、VPN 隧道、veth…）上的流量会在物理网卡上再出现一次，不计入总量。
                     if kind != "virtual" {
+                        has_physical = true;
                         rx_counted = rx_counted.saturating_add(rx);
                         tx_counted = tx_counted.saturating_add(tx);
                     }
@@ -282,10 +296,10 @@ impl Sampler {
                 });
             }
             // 极端情况下所有接口都被判成虚拟的，退回"全部非回环"，总比显示 0 好。
-            let (rx, tx) = if rx_counted + tx_counted == 0 {
-                (rx_any, tx_any)
-            } else {
+            let (rx, tx) = if has_physical {
                 (rx_counted, tx_counted)
+            } else {
+                (rx_any, tx_any)
             };
             tick.net_rx_bps = rate(rx);
             tick.net_tx_bps = rate(tx);
@@ -378,6 +392,9 @@ impl Sampler {
                 // 商店版没有传感器（见 `edition::SENSORS`），只读系统的热压力等级。
                 #[cfg(not(feature = "appstore"))]
                 {
+                    if self.components.is_none() {
+                        self.components = Components::new_with_refreshed_list().ok();
+                    }
                     let mut temperatures = self.components.as_mut().map_or_else(Vec::new, |c| {
                         c.refresh(false);
                         sensors::temperatures(c)

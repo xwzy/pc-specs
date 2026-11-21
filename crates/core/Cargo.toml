@@ -36,7 +36,8 @@ sysinfo = { version = "0.40", default-features = false, features = ["system", "d
 os_info = "3"
 whoami = "2"
 sys-locale = "0.3"
-battery = "0.7"
+# Maintained fork: battery 0.7 pulls in vulnerable nix 0.19 (RUSTSEC-2021-0119).
+battery = { package = "starship-battery", version = "0.12" }
 parking_lot = "0.13"
 # 存储空间分析：并行遍历目录树。
 rayon = "1"
@@ -75,6 +76,7 @@ windows = { version = "0.62", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_System_ProcessStatus",
+    "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_HiDpi",

@@ -50,6 +50,14 @@ pub(super) struct Speed {
     epoch: u64,
 }
 
+impl Drop for Speed {
+    fn drop(&mut self) {
+        if let State::Running(run) = &self.state {
+            run.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 #[derive(Default)]
 enum State {
     #[default]

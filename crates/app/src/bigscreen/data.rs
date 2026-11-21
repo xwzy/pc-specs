@@ -10,6 +10,8 @@ use std::collections::VecDeque;
 
 /// 最长保留多久的走势：设置里最长的时间窗口是 10 分钟，多留几秒免得图表左端被截掉。
 const KEEP_MS: u64 = 10 * 60_000 + 5_000;
+// Also bound by count if the wall clock stops advancing or repeatedly jumps.
+const MAX_POINTS: usize = (KEEP_MS / 250) as usize + 1;
 /// 重采样后连续缺这么多格以内的空洞会被补上（采样偶尔晚一拍很常见），再长就是真的没数据。
 const FILL_GAP: usize = 2;
 
@@ -69,7 +71,9 @@ impl History {
         }
         self.points.push_back(Point::new(tick));
         let oldest = tick.timestamp.saturating_sub(KEEP_MS);
-        while self.points.front().is_some_and(|point| point.at < oldest) {
+        while self.points.len() > MAX_POINTS
+            || self.points.front().is_some_and(|point| point.at < oldest)
+        {
             self.points.pop_front();
         }
     }
@@ -209,5 +213,28 @@ pub fn available(kind: WidgetKind, app: &AppState) -> bool {
         | WidgetKind::DiskIo
         | WidgetKind::Processes
         | WidgetKind::System => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_is_bounded_even_when_timestamps_stop_advancing() {
+        let mut history = History::default();
+        let tick = MonitorTick {
+            timestamp: 123,
+            ..Default::default()
+        };
+        for _ in 0..MAX_POINTS * 10 {
+            history.push(&tick);
+        }
+        assert_eq!(history.points.len(), MAX_POINTS);
+        history.push(&MonitorTick {
+            timestamp: 1,
+            ..Default::default()
+        });
+        assert_eq!(history.points.len(), 1);
     }
 }

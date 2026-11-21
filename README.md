@@ -40,6 +40,8 @@ scripts/build-and-install.sh       # 编译发布版并装到本机（macOS 装�
 
 Rust 需要 1.92+。Linux 的编译依赖用 `scripts/linux/install-deps.sh` 安装（Debian / Ubuntu 和 Fedora / RHEL）。
 
+后台运行的资源边界、审查结果和长时间验证方法见 [后台稳定性审查](docs/BACKGROUND_STABILITY.md)。macOS / Linux 可以用 `python3 scripts/check-background.py --duration 86400` 对发布版连续检查 24 小时，记录 CPU、内存和线程数。
+
 运行时 Linux 需要可用的 Vulkan 驱动与 Wayland / X11 会话。发行包在 Ubuntu 22.04（glibc 2.35）上构建，Ubuntu 22.04+、Debian 12+、Fedora 36+ 及同期的发行版可以运行。deb / rpm 会自动安装依赖库；tar.gz 和 AppImage 不带库，需要系统里有 libvulkan、libxkbcommon-x11、libwayland-client、libX11-xcb、libfontconfig。
 
 ## 打包与发布

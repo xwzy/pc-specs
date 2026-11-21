@@ -282,6 +282,7 @@ pub struct AppState {
     pub latest: Option<MonitorTick>,
     pub paused: bool,
     monitor_tx: mpsc::Sender<MonitorCmd>,
+    monitor_interval: Duration,
     /// 上次告诉监控线程的温度读取周期。
     temperature_demand: Option<Duration>,
 
@@ -436,6 +437,7 @@ impl AppState {
             latest: None,
             paused: false,
             monitor_tx,
+            monitor_interval: interval,
             // 监控线程启动时按这个节奏读；第一个采样之后会按实际需要调整。
             temperature_demand: Some(TEMPERATURE_TTL),
             processes: Vec::new(),
@@ -521,9 +523,7 @@ impl AppState {
         if now.theme != before.theme {
             self.apply_theme(cx);
         }
-        if now.interval_ms != before.interval_ms {
-            let _ = self.monitor_tx.send(MonitorCmd::Interval(now.interval_ms));
-        }
+        self.sync_temperature_demand();
         if now.interval_ms != before.interval_ms || now.history_minutes != before.history_minutes {
             self.trim_history();
         }
@@ -732,6 +732,7 @@ impl AppState {
             let _ = this.update(cx, |this, cx| {
                 if this.refresh_epoch == epoch && this.refreshing {
                     tracing::warn!("hardware refresh timed out, releasing the refreshing flag");
+                    this.refresh_epoch = this.refresh_epoch.wrapping_add(1);
                     this.refreshing = false;
                     cx.notify();
                 }
@@ -772,7 +773,7 @@ impl AppState {
                 remaining = remaining.saturating_sub(1);
                 let alive = this.update(cx, |this, cx| {
                     // 手动全量刷新开始后，不允许较早的定时采集覆盖新结果。
-                    if this.refresh_epoch != epoch {
+                    if this.refresh_epoch != epoch || this.live_serial != serial {
                         return;
                     }
                     guarded("apply module", || {
@@ -792,8 +793,10 @@ impl AppState {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                this.live_refreshing = false;
-                cx.notify();
+                if this.live_serial == serial {
+                    this.live_refreshing = false;
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -802,6 +805,7 @@ impl AppState {
             cx.background_executor().timer(REFRESH_TIMEOUT).await;
             let _ = this.update(cx, |this, _| {
                 if this.live_serial == serial {
+                    this.live_serial = this.live_serial.wrapping_add(1);
                     this.live_refreshing = false;
                 }
             });
@@ -867,6 +871,29 @@ impl AppState {
     }
 
     fn sync_temperature_demand(&mut self) {
+        let foreground = self.main_window.is_some()
+            || self.detail_window.is_some()
+            || self.wall_window.is_some()
+            || self.floating_window.is_some();
+        let menu_refresh = self.tray.as_ref().and_then(|_| {
+            self.settings
+                .menu_bar
+                .visible()
+                .next()
+                .map(|_| self.settings.menu_bar.refresh_ms)
+        });
+        let interval = monitor_interval(
+            self.settings.interval_ms,
+            foreground,
+            menu_refresh,
+            self.settings.alerts && self.settings.rules.iter().any(|rule| rule.enabled),
+        );
+        if interval != self.monitor_interval {
+            self.monitor_interval = interval;
+            let _ = self
+                .monitor_tx
+                .send(MonitorCmd::Interval(interval.as_millis() as u64));
+        }
         let demand = self.temperature_demand();
         if demand != self.temperature_demand {
             self.temperature_demand = demand;
@@ -1223,6 +1250,7 @@ impl AppState {
 
     /// 窗口、页面、菜单栏面板或设置变了之后调用：该开的数据源开起来，没人要的关掉。
     pub fn sync_feeds(&mut self, cx: &mut Context<Self>) {
+        self.sync_temperature_demand();
         self.sync_process_feed(cx);
         self.sync_net_feed(cx);
     }
@@ -1846,9 +1874,20 @@ fn run_in_background<R: Send + 'static>(
     cx: &mut Context<AppState>,
 ) {
     let (tx, rx) = async_channel::bounded(1);
-    if !spawn_thread(name, move || {
+    if !crate::background::submit(move || {
         let _ = tx.send_blocking(work());
     }) {
+        tracing::warn!("background action queue unavailable or full: {name}");
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            let _ = this.update(cx, |this, cx| {
+                this.toast(
+                    NotificationType::Warning,
+                    t!("rule_delivery_busy").into_owned(),
+                    cx,
+                );
+            });
+        });
         return;
     }
     cx.spawn(async move |this, cx| {
@@ -1861,6 +1900,28 @@ fn run_in_background<R: Send + 'static>(
 
 /// 采样器出了问题（panic）之后，隔多久再重建一个继续采。
 const SAMPLER_RETRY: Duration = Duration::from_secs(2);
+
+/// Background sampling follows the visible menu's cadence, with a one-second
+/// ceiling on latency when rules are enabled and a five-second idle cadence.
+fn monitor_interval(
+    requested_ms: u64,
+    foreground: bool,
+    menu_ms: Option<u64>,
+    rules: bool,
+) -> Duration {
+    let requested_ms = requested_ms.clamp(250, 10_000);
+    let cadence = if foreground {
+        requested_ms
+    } else {
+        let background = menu_ms.unwrap_or(5_000).clamp(250, 10_000);
+        requested_ms.max(if rules {
+            background.min(1_000)
+        } else {
+            background
+        })
+    };
+    Duration::from_millis(cadence)
+}
 
 /// 监控线程：自己持有 `Sampler`，按间隔采样并把结果发回界面线程。
 ///
@@ -1916,5 +1977,32 @@ fn run_monitor(
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod background_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_windows_sample_only_as_fast_as_consumers_need() {
+        assert_eq!(
+            monitor_interval(250, true, Some(2000), true).as_millis(),
+            250
+        );
+        assert_eq!(
+            monitor_interval(250, false, Some(2000), false).as_millis(),
+            2000
+        );
+        assert_eq!(
+            monitor_interval(250, false, Some(2000), true).as_millis(),
+            1000
+        );
+        assert_eq!(monitor_interval(250, false, None, false).as_millis(), 5000);
+        assert_eq!(
+            monitor_interval(10_000, false, Some(1000), true).as_millis(),
+            10_000
+        );
+        assert_eq!(monitor_interval(0, true, None, false).as_millis(), 250);
     }
 }

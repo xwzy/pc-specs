@@ -7,7 +7,6 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// 当前 UTC 毫秒时间戳。
@@ -113,8 +112,6 @@ pub struct Output {
 const MAX_COMMANDS: usize = 6;
 /// 单个命令的输出上限；超出的部分读掉丢弃，不让一个失控的命令把内存吃光。
 const OUTPUT_LIMIT: u64 = 16 * 1024 * 1024;
-/// 命令结束（或被杀）之后，再等它的输出读完的最长时间。
-const OUTPUT_GRACE: Duration = Duration::from_secs(1);
 
 static RUNNING_COMMANDS: Mutex<usize> = Mutex::new(0);
 static COMMAND_FINISHED: Condvar = Condvar::new();
@@ -123,13 +120,20 @@ static COMMAND_FINISHED: Condvar = Condvar::new();
 struct CommandSlot;
 
 impl CommandSlot {
-    fn acquire() -> Self {
+    fn acquire(deadline: Instant) -> Option<Self> {
         let mut running = RUNNING_COMMANDS.lock();
         while *running >= MAX_COMMANDS {
-            COMMAND_FINISHED.wait(&mut running);
+            let wait = deadline.saturating_duration_since(Instant::now());
+            if wait.is_zero() {
+                return None;
+            }
+            COMMAND_FINISHED.wait_for(&mut running, wait);
+        }
+        if Instant::now() >= deadline {
+            return None;
         }
         *running += 1;
-        Self
+        Some(Self)
     }
 }
 
@@ -140,25 +144,10 @@ impl Drop for CommandSlot {
     }
 }
 
-/// 在独立线程里把管道读到头。线程起不来时返回一个已断开的通道，调用方当作没有输出。
-fn read_pipe(mut pipe: impl Read + Send + 'static) -> mpsc::Receiver<Vec<u8>> {
-    let (tx, rx) = mpsc::channel();
-    let _ = std::thread::Builder::new()
-        .name("pc-specs-pipe".into())
-        .spawn(move || {
-            let mut buf = Vec::new();
-            let _ = (&mut pipe).take(OUTPUT_LIMIT).read_to_end(&mut buf);
-            // 超出上限的部分读掉扔了，免得子进程写满管道卡死在那里。
-            let _ = std::io::copy(&mut pipe, &mut std::io::sink());
-            let _ = tx.send(buf);
-        });
-    rx
-}
-
 /// 运行外部命令并在 `timeout` 后强制结束。Windows 下不弹出控制台窗口。
 /// 命令不存在、超时、无法启动都返回 `None`。
 ///
-/// 同时最多跑 [`MAX_COMMANDS`] 个命令，多的排队；排队的时间不算进 `timeout`。
+/// 同时最多跑 [`MAX_COMMANDS`] 个命令，多的排队；排队也计入 `timeout`。
 pub fn run_with(
     cmd: &str,
     args: &[&str],
@@ -195,7 +184,8 @@ pub fn run_shell(script: &str, env: &[(&str, &str)], timeout: Duration) -> Optio
 }
 
 fn execute(mut command: Command, timeout: Duration) -> Option<Output> {
-    let _slot = CommandSlot::acquire();
+    let deadline = Instant::now().checked_add(timeout)?;
+    let slot = CommandSlot::acquire(deadline)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -218,38 +208,146 @@ fn execute(mut command: Command, timeout: Duration) -> Option<Output> {
         kill_tree(&mut child, false);
         return None;
     };
-    let out_rx = read_pipe(out);
-    let err_rx = read_pipe(err);
+    let (mut out, mut err) = (out, err);
+    let _slot = slot;
+    collect_pipes(&mut child, &mut out, &mut err, deadline)
+}
 
-    let deadline = Instant::now() + timeout;
-    // 快命令几毫秒就结束，慢命令（system_profiler 之类）要跑好几秒：等待间隔由短到长，
-    // 既不让快命令白等，也不让慢命令期间每秒醒上百次。
-    let mut nap = Duration::from_millis(2);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() >= deadline => {
-                kill_tree(&mut child, true);
-                break None;
-            }
-            Ok(None) => {
-                std::thread::sleep(nap);
-                nap = (nap * 2).min(Duration::from_millis(50));
-            }
-            Err(_) => {
-                kill_tree(&mut child, false);
-                break None;
-            }
+/// Drain both pipes on the command's own thread. Nonblocking reads also handle
+/// shell scripts whose descendants retain stdout after the shell exits: closing
+/// our readers cannot strand any helper threads.
+fn collect_pipes(
+    child: &mut Child,
+    out: &mut std::process::ChildStdout,
+    err: &mut std::process::ChildStderr,
+    deadline: Instant,
+) -> Option<Output> {
+    #[cfg(unix)]
+    use std::os::fd::AsRawFd as _;
+    #[cfg(unix)]
+    for fd in [out.as_raw_fd(), err.as_raw_fd()] {
+        // SAFETY: the child pipe owns this valid descriptor throughout the call.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            kill_tree(child, true);
+            return None;
         }
-    };
-    let stdout = out_rx.recv_timeout(OUTPUT_GRACE).unwrap_or_default();
-    let stderr = err_rx.recv_timeout(OUTPUT_GRACE).unwrap_or_default();
-    let status = status?;
-    Some(Output {
-        ok: status.success(),
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
-    })
+    }
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    #[cfg(unix)]
+    let mut descriptors = [out.as_raw_fd(), err.as_raw_fd()].map(|fd| libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    });
+    let mut nap = 2;
+    loop {
+        let out_done = drain_pipe(out, &mut stdout);
+        let err_done = drain_pipe(err, &mut stderr);
+        let status = match child.try_wait() {
+            Ok(Some(status)) => {
+                // Read the tail written between our last drain and process exit.
+                drain_pipe(out, &mut stdout);
+                drain_pipe(err, &mut stderr);
+                status
+            }
+            Ok(None) if Instant::now() < deadline => {
+                let wait = deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis()
+                    .min(nap) as i32;
+                #[cfg(unix)]
+                {
+                    // Ignore EOF descriptors so POLLHUP cannot cause a busy loop.
+                    if out_done {
+                        descriptors[0].fd = -1;
+                    }
+                    if err_done {
+                        descriptors[1].fd = -1;
+                    }
+                    // SAFETY: descriptors contains two initialized pollfd values.
+                    unsafe {
+                        libc::poll(descriptors.as_mut_ptr(), 2, wait);
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    let _ = (out_done, err_done);
+                    std::thread::sleep(Duration::from_millis(wait as u64));
+                }
+                nap = (nap * 2).min(50);
+                continue;
+            }
+            _ => {
+                kill_tree(child, true);
+                return None;
+            }
+        };
+        return Some(Output {
+            ok: status.success(),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        });
+    }
+}
+
+#[cfg(unix)]
+fn drain_pipe(pipe: &mut impl Read, output: &mut Vec<u8>) -> bool {
+    let mut buffer = [0; 8192];
+    // Bound each turn even if a subprocess writes continuously.
+    for _ in 0..32 {
+        match pipe.read(&mut buffer) {
+            Ok(0) => return true,
+            Ok(n) => {
+                let keep = n.min((OUTPUT_LIMIT as usize).saturating_sub(output.len()));
+                output.extend_from_slice(&buffer[..keep]);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return e.kind() != std::io::ErrorKind::WouldBlock,
+        }
+    }
+    false
+}
+
+#[cfg(windows)]
+fn drain_pipe(
+    pipe: &mut (impl Read + std::os::windows::io::AsRawHandle),
+    output: &mut Vec<u8>,
+) -> bool {
+    use windows::Win32::{Foundation::HANDLE, System::Pipes::PeekNamedPipe};
+    let mut buffer = [0; 8192];
+    for _ in 0..32 {
+        let mut available = 0;
+        // SAFETY: this is our live child pipe; no other thread reads from it.
+        if unsafe {
+            PeekNamedPipe(
+                HANDLE(pipe.as_raw_handle()),
+                None,
+                0,
+                None,
+                Some(&mut available),
+                None,
+            )
+        }
+        .is_err()
+        {
+            return true;
+        }
+        if available == 0 {
+            return false;
+        }
+        let amount = (available as usize).min(buffer.len());
+        match pipe.read(&mut buffer[..amount]) {
+            Ok(0) => return true,
+            Ok(n) => {
+                let keep = n.min((OUTPUT_LIMIT as usize).saturating_sub(output.len()));
+                output.extend_from_slice(&buffer[..keep]);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return true,
+        }
+    }
+    false
 }
 
 /// 结束子进程并收尸。`group` 为真时整个进程组一起杀（只在子进程确定还没被回收时才安全，
@@ -498,5 +596,52 @@ pub fn fmt_bytes(n: u64) -> String {
         format!("{n} {}", UNITS[0])
     } else {
         format!("{:.1} {}", v, UNITS[i])
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drains_stdout_and_stderr_without_pipe_deadlocks() {
+        let output = run_shell("i=0; while [ $i -lt 10000 ]; do printf 'out\\n'; printf 'err\\n' >&2; i=$((i+1)); done", &[], Duration::from_secs(10)).unwrap();
+        assert!(output.ok);
+        assert_eq!(output.stdout.lines().count(), 10_000);
+        assert_eq!(output.stderr.lines().count(), 10_000);
+    }
+
+    #[test]
+    fn surviving_descendants_do_not_leave_pipe_reader_threads() {
+        let began = Instant::now();
+        let output = run_shell("sleep 2 & printf done", &[], Duration::from_secs(1)).unwrap();
+        assert!(output.ok);
+        assert_eq!(output.stdout, "done");
+        assert!(began.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn timeouts_and_closed_pipes_do_not_spin_or_hang() {
+        let began = Instant::now();
+        assert!(run_shell("exec 1>&- 2>&-; sleep 5", &[], Duration::from_millis(100)).is_none());
+        assert!(began.elapsed() < Duration::from_secs(2));
+        assert!(
+            run_shell("printf ok", &[], Duration::from_secs(2))
+                .unwrap()
+                .ok
+        );
+    }
+
+    #[test]
+    fn output_cap_still_drains_the_child_and_retains_the_tail_of_other_pipe() {
+        let output = run_shell(
+            "head -c 18000000 /dev/zero; printf tail >&2",
+            &[],
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert!(output.ok);
+        assert_eq!(output.stdout.len(), OUTPUT_LIMIT as usize);
+        assert_eq!(output.stderr, "tail");
     }
 }

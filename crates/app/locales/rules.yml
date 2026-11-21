@@ -1,4 +1,7 @@
 _version: 2
+rule_delivery_busy:
+  en: "Too many pending actions. Try again after current actions finish."
+  zh-CN: "待执行动作过多，请等待当前动作完成后重试。"
 nav_rules:
   en: "Rules"
   zh-CN: "规则"

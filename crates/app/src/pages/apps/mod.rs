@@ -95,9 +95,17 @@ pub struct AppsPage {
     /// 找残留的任务编号：换了选中项，旧任务的结果回来时据此丢弃。
     find_epoch: u64,
     find_cancel: Arc<AtomicBool>,
+    scan_cancel: Arc<AtomicBool>,
     /// 卸载正在进行：这期间不接受第二个。
     busy: bool,
     _subscriptions: Vec<Subscription>,
+}
+
+impl Drop for AppsPage {
+    fn drop(&mut self) {
+        self.find_cancel.store(true, Ordering::Relaxed);
+        self.scan_cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 /// 一个应用在列表里的唯一标识。
@@ -135,6 +143,7 @@ impl AppsPage {
             leftovers: Leftovers::None,
             find_epoch: 0,
             find_cancel: Arc::new(AtomicBool::new(false)),
+            scan_cancel: Arc::new(AtomicBool::new(false)),
             busy: false,
             _subscriptions: subscriptions,
         }
@@ -155,22 +164,36 @@ impl AppsPage {
         if self.loading || !apps::SUPPORTED {
             return;
         }
-        let (tx, rx) = async_channel::unbounded();
+        let (tx, rx) = async_channel::bounded(16);
+        self.scan_cancel.store(true, Ordering::Relaxed);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.scan_cancel = cancel.clone();
         let started = spawn_thread("pc-specs-apps", move || {
             let Some(list) = guarded("apps list", apps::list) else {
                 return;
             };
-            let _ = tx.send_blocking(Event::Listed(list.clone()));
-            let cancel = AtomicBool::new(false);
+            if tx.send_blocking(Event::Listed(list.clone())).is_err() {
+                return;
+            }
             // 图标几毫秒一个，先送；大小要遍历整个应用包，慢慢来。
             for (index, app) in list.iter().enumerate() {
-                if let Some(png) = app.path.as_deref().and_then(icon::png) {
-                    let _ = tx.send_blocking(Event::Icon(index, png));
+                if cancel.load(Ordering::Relaxed) || tx.is_closed() {
+                    return;
+                }
+                if let Some(png) = app.path.as_deref().and_then(icon::png)
+                    && tx.send_blocking(Event::Icon(index, png)).is_err()
+                {
+                    return;
                 }
             }
             for (index, app) in list.iter().enumerate() {
+                if cancel.load(Ordering::Relaxed) || tx.is_closed() {
+                    return;
+                }
                 let size = guarded("apps size", || apps::size_of(app, &cancel)).flatten();
-                let _ = tx.send_blocking(Event::Size(index, size));
+                if tx.send_blocking(Event::Size(index, size)).is_err() {
+                    return;
+                }
             }
         });
         // 线程起不来也记一笔时间：不然每次重画都会再试一次。

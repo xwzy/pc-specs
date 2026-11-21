@@ -447,22 +447,7 @@ pub fn clean(spec: &Spec, progress: &Progress, cancel: &AtomicBool) -> Cleaned {
         let Ok(items) = items(root) else { continue };
         let results: Vec<Option<bool>> = items
             .par_iter()
-            .map(|item| {
-                if cancel.load(Relaxed) {
-                    return None;
-                }
-                let (before, _) = space::usage(&item.path, cancel);
-                let removed = remove(&item.path);
-                let after = if removed {
-                    0
-                } else {
-                    space::usage(&item.path, cancel).0
-                };
-                progress
-                    .freed
-                    .fetch_add(before.saturating_sub(after), Relaxed);
-                Some(removed)
-            })
+            .map(|item| clean_item(&item.path, progress, cancel, space::usage))
             .collect();
         for result in results.into_iter().flatten() {
             if result {
@@ -473,6 +458,29 @@ pub fn clean(spec: &Spec, progress: &Progress, cancel: &AtomicBool) -> Cleaned {
         }
     }
     cleaned
+}
+
+fn clean_item(
+    path: &Path,
+    progress: &Progress,
+    cancel: &AtomicBool,
+    measure: impl Fn(&Path, &AtomicBool) -> (u64, u64),
+) -> Option<bool> {
+    if cancel.load(Relaxed) {
+        return None;
+    }
+    let (before, _) = measure(path, cancel);
+    // Measuring a large directory can take minutes. A cancellation during that
+    // scan must be checked before starting an irreversible recursive deletion.
+    if cancel.load(Relaxed) {
+        return None;
+    }
+    let removed = remove(path);
+    let after = if removed { 0 } else { measure(path, cancel).0 };
+    progress
+        .freed
+        .fetch_add(before.saturating_sub(after), Relaxed);
+    Some(removed)
 }
 
 /// 删一项：文件夹连同里面的一切；符号链接只删链接本身，不碰它指向的东西。
@@ -489,6 +497,23 @@ fn remove(path: &Path) -> bool {
 mod tests {
     use super::*;
     use std::fs::File;
+
+    #[test]
+    fn cancelling_during_size_measurement_does_not_start_deletion() {
+        let dir = Scratch::new("cancel-before-delete");
+        let file = dir.write("cache/keep.bin", 123);
+        let cancel = AtomicBool::new(false);
+        let progress = Progress::default();
+        assert_eq!(
+            clean_item(&file, &progress, &cancel, |_, cancel| {
+                cancel.store(true, Relaxed);
+                (123, 1)
+            }),
+            None
+        );
+        assert!(file.exists());
+        assert_eq!(progress.freed.load(Relaxed), 0);
+    }
 
     struct Scratch(PathBuf);
 
