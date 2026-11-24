@@ -4857,6 +4857,7 @@ dependencies = [
  "starship-battery",
  "sys-locale",
  "sysinfo 0.40.1",
+ "tempfile",
  "tokio",
  "tower-http",
  "tracing",

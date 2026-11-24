@@ -3,10 +3,15 @@
 //! 数据来自实时采样（速率 × 采样间隔），所以统计的是程序运行期间的流量；
 //! 口径和速率一样（不含回环和虚拟网卡），数字和菜单栏里看到的一致。
 
+use crate::menubar::archive::{Archive, Record};
 use chrono::{Datelike as _, Duration as Days, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 /// 逐日记录最多保留多少天；更早的只留在累计总量里，文件不会越长越大。
@@ -41,7 +46,7 @@ impl Traffic {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Stored {
     /// 每天的流量，键是本地日期 `YYYY-MM-DD`。
@@ -57,6 +62,7 @@ pub struct Usage {
     /// 不足一字节的零头：速率乘间隔是小数，逐次取整会越丢越多。
     carry: (f64, f64),
     dirty: bool,
+    write_failed: Arc<AtomicBool>,
     saved_at: Instant,
 }
 
@@ -88,6 +94,7 @@ impl Usage {
             stored,
             carry: (0.0, 0.0),
             dirty: false,
+            write_failed: Arc::default(),
             saved_at: Instant::now(),
         }
     }
@@ -158,39 +165,39 @@ impl Usage {
     }
 
     /// 清零重新开始。
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self, archive: &mut Archive) {
         self.stored = Stored::default();
         self.carry = (0.0, 0.0);
         self.dirty = true;
-        self.save();
+        self.save(archive);
     }
 
     /// 有改动、并且离上次写盘够久了才写：每秒都写没有必要。
-    pub fn save_if_due(&mut self) {
-        if self.dirty && self.saved_at.elapsed() >= SAVE_EVERY {
-            self.save();
+    pub fn save_if_due(&mut self, archive: &mut Archive) {
+        if self.saved_at.elapsed() >= SAVE_EVERY {
+            self.save(archive);
         }
     }
 
     /// 写入失败只记日志：丢一段统计不该打断使用。
-    pub fn save(&mut self) {
+    pub fn save(&mut self, archive: &mut Archive) {
         self.saved_at = Instant::now();
-        if !self.dirty {
+        let failed = self.write_failed.swap(false, Ordering::Relaxed);
+        if !self.dirty && !failed {
             return;
         }
-        let Some(path) = path() else { return };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("json.tmp");
-        let result = serde_json::to_string(&self.stored)
-            .map_err(std::io::Error::other)
-            .and_then(|text| std::fs::write(&tmp, text))
-            .and_then(|_| std::fs::rename(&tmp, &path));
-        match result {
-            Ok(()) => self.dirty = false,
-            Err(e) => tracing::warn!("failed to save data usage: {e}"),
-        }
+        let stored = self.stored.clone();
+        let failed = self.write_failed.clone();
+        self.dirty = !archive.queue_record(Record::Usage, move || {
+            let Some(path) = path() else {
+                failed.store(true, Ordering::Relaxed);
+                return;
+            };
+            if let Err(error) = crate::settings::write_json(&path, &stored) {
+                failed.store(true, Ordering::Relaxed);
+                tracing::warn!("failed to save data usage: {error}");
+            }
+        });
     }
 }
 

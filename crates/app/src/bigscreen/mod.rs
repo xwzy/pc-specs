@@ -154,6 +154,7 @@ fn show(cx: &mut App) {
     let cfg = state.read(cx).settings.bigscreen.clone();
     let options = window_options(&cfg, pick(&cfg, &screens), cx);
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
+        AppState::track_visibility(&state, window, cx);
         window.set_window_title(&format!("{} · {}", t!("app_name"), t!("bs_title")));
         let state = state.clone();
         cx.new(|cx| view::BigScreen::new(state, window, cx))

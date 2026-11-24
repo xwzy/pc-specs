@@ -338,10 +338,13 @@ pub fn sanitize(rules: &mut Vec<Rule>) {
     rules.retain(|rule| rule.metric.available());
     rules.truncate(MAX_RULES);
     let mut taken = HashSet::new();
-    let mut next = rules.iter().map(|rule| rule.id).max().unwrap_or(0);
+    let reserved: HashSet<_> = rules.iter().map(|rule| rule.id).collect();
+    let mut next = next_id(rules);
     for rule in rules.iter_mut() {
         if !taken.insert(rule.id) {
-            next = next.saturating_add(1);
+            while reserved.contains(&next) || taken.contains(&next) {
+                next = next.wrapping_add(1).max(1);
+            }
             rule.id = next;
             taken.insert(next);
         }
@@ -366,11 +369,17 @@ pub fn sanitize(rules: &mut Vec<Rule>) {
 
 /// 新规则的编号。
 pub fn next_id(rules: &[Rule]) -> u32 {
-    rules
+    let mut id = rules
         .iter()
         .map(|rule| rule.id)
         .max()
-        .map_or(1, |id| id.saturating_add(1))
+        .unwrap_or(0)
+        .wrapping_add(1)
+        .max(1);
+    while rules.iter().any(|rule| rule.id == id) {
+        id = id.wrapping_add(1).max(1);
+    }
+    id
 }
 
 pub fn clean_url(url: &str) -> String {
@@ -792,19 +801,15 @@ pub fn load_events() -> VecDeque<RuleEvent> {
 }
 
 /// 写入失败只记日志：丢一份历史记录不该打断使用。
-pub fn save_events(events: &VecDeque<RuleEvent>) {
-    let Some(path) = events_path() else { return };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let tmp = path.with_extension("json.tmp");
-    let result = serde_json::to_string(events)
-        .map_err(std::io::Error::other)
-        .and_then(|text| std::fs::write(&tmp, text))
-        .and_then(|_| std::fs::rename(&tmp, &path));
-    if let Err(e) = result {
-        tracing::warn!("failed to save the rule log: {e}");
-    }
+pub fn save_events(events: &VecDeque<RuleEvent>, archive: &mut crate::menubar::archive::Archive) {
+    let events = events.clone();
+    archive.queue_record(crate::menubar::archive::Record::RuleEvents, move || {
+        if let Some(path) = events_path()
+            && let Err(e) = crate::settings::write_json(&path, &events)
+        {
+            tracing::warn!("failed to save the rule log: {e}");
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1125,6 +1130,22 @@ mod tests {
         assert_ne!(rules[0].id, rules[1].id);
         assert!(rules[0].threshold.is_finite());
         assert_eq!(rules[0].cooldown_mins, 1);
+    }
+
+    #[test]
+    fn ids_wrap_without_replacing_existing_rules() {
+        let mut rules = [u32::MAX, u32::MAX, 1, 2]
+            .map(|id| Rule {
+                id,
+                ..Rule::default()
+            })
+            .to_vec();
+        sanitize(&mut rules);
+        assert_eq!(
+            rules.iter().map(|r| r.id).collect::<Vec<_>>(),
+            [u32::MAX, 3, 1, 2]
+        );
+        assert_eq!(next_id(&rules), 4);
     }
 
     #[test]

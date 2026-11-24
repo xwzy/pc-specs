@@ -189,6 +189,10 @@ impl Sampler {
         self.temperature_every = every;
         if every.is_none() {
             // 不再需要了：缓存的旧读数不能留着，下次再要的时候重新读。
+            #[cfg(not(feature = "appstore"))]
+            {
+                self.components = None;
+            }
             self.temperatures = Vec::new();
             self.other_sensors = Vec::new();
             self.thermal_pressure = None;
@@ -308,7 +312,9 @@ impl Sampler {
 
         if let Some(disks) = self.disks.as_mut() {
             let relist = self.disks_listed_at.elapsed() >= DISK_RELIST;
+            // New volumes need capacity before plan_disks can select them.
             let io = DiskRefreshKind::nothing().with_io_usage();
+            let io = if relist { io.with_storage() } else { io };
             #[cfg(target_os = "macos")]
             let per_disk: Vec<DiskTick> = {
                 // sysinfo 的 `Disks::refresh_specifics` 在 macOS 上每次都把全部卷重新枚举一遍
@@ -392,13 +398,15 @@ impl Sampler {
                 // 商店版没有传感器（见 `edition::SENSORS`），只读系统的热压力等级。
                 #[cfg(not(feature = "appstore"))]
                 {
-                    if self.components.is_none() {
+                    if let Some(components) = self.components.as_mut() {
+                        components.refresh(true);
+                    } else {
                         self.components = Components::new_with_refreshed_list().ok();
                     }
-                    let mut temperatures = self.components.as_mut().map_or_else(Vec::new, |c| {
-                        c.refresh(false);
-                        sensors::temperatures(c)
-                    });
+                    let mut temperatures = self
+                        .components
+                        .as_ref()
+                        .map_or_else(Vec::new, sensors::temperatures);
                     // 平台自己的传感器里也有温度（macOS 的 CPU / GPU 逐核温度），并进温度列表，其余归「其他」。
                     let (platform_temperatures, others): (Vec<_>, Vec<_>) =
                         crate::platform::live_sensors()

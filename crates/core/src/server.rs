@@ -30,7 +30,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::future::IntoFuture as _;
 use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use tower_http::cors::{Any, CorsLayer};
@@ -93,8 +93,7 @@ pub fn spawn(addr: SocketAddr) -> ServerHandle {
     let thread = std::thread::Builder::new()
         .name("pc-specs-http".to_string())
         .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
+            let runtime = tokio::runtime::Builder::new_current_thread()
                 .thread_name("pc-specs-http-worker")
                 .enable_all()
                 .build();
@@ -197,12 +196,10 @@ struct ServerState {
     started_at: Instant,
     /// Snapshot 缓存（原子刷新 + single-flight）。`Arc` 让多次请求只增加引用计数。
     snapshot_cache: Mutex<Option<(Instant, Arc<SystemSnapshot>)>>,
-    snapshot_refresh_lock: Arc<AsyncMutex<()>>,
     info_slots: Arc<tokio::sync::Semaphore>,
     /// 首个 metrics 请求到来时才创建，没有请求就不占任何资源。
-    sampler: OnceLock<Option<SamplerWorker>>,
+    sampler: AsyncMutex<Option<SamplerWorker>>,
     metrics_cache: Mutex<Option<(Instant, Arc<LightMetrics>)>>,
-    metrics_refresh_lock: AsyncMutex<()>,
 }
 
 impl ServerState {
@@ -210,11 +207,9 @@ impl ServerState {
         Self {
             started_at: Instant::now(),
             snapshot_cache: Mutex::new(None),
-            snapshot_refresh_lock: Arc::new(AsyncMutex::new(())),
             info_slots: Arc::new(tokio::sync::Semaphore::new(2)),
-            sampler: OnceLock::new(),
+            sampler: AsyncMutex::new(None),
             metrics_cache: Mutex::new(None),
-            metrics_refresh_lock: AsyncMutex::new(()),
         }
     }
 }
@@ -238,6 +233,11 @@ impl SamplerWorker {
                     if reply.is_closed() {
                         continue;
                     }
+                    // A previous listener may still be blocked in an OS call.
+                    static SAMPLING: Mutex<()> = Mutex::new(());
+                    let Some(_active) = SAMPLING.try_lock() else {
+                        continue;
+                    };
                     if sampler.is_none() {
                         sampler = guarded("http sampler init", Sampler::new);
                     }
@@ -487,7 +487,9 @@ async fn snapshot_cached_with(
         return Ok(s);
     }
     // 同一时间只允许一个请求触发采集，其余等待并复用结果。
-    let guard = state.snapshot_refresh_lock.clone().lock_owned().await;
+    // The port can be reopened before an old blocking collection returns.
+    static REFRESH: LazyLock<Arc<AsyncMutex<()>>> = LazyLock::new(Default::default);
+    let guard = REFRESH.clone().lock_owned().await;
     if let Some(s) = read_fresh_snapshot(state) {
         return Ok(s);
     }
@@ -516,16 +518,18 @@ async fn metrics_throttled(state: &Arc<ServerState>) -> Result<Arc<LightMetrics>
     if let Some(m) = read_fresh_metrics(state) {
         return Ok(m);
     }
-    let _guard = state.metrics_refresh_lock.lock().await;
+    let mut sampler = state.sampler.lock().await;
     if let Some(m) = read_fresh_metrics(state) {
         return Ok(m);
     }
-    let worker = state
-        .sampler
-        .get_or_init(SamplerWorker::start)
-        .as_ref()
-        .ok_or("sampler thread unavailable")?;
-    let tick = worker.sample().await.ok_or("sampler thread stopped")?;
+    if sampler.is_none() {
+        *sampler = SamplerWorker::start();
+    }
+    let worker = sampler.as_ref().ok_or("sampler thread unavailable")?;
+    let tick = worker
+        .sample()
+        .await
+        .ok_or("sampler temporarily unavailable")?;
     let metrics = Arc::new(LightMetrics {
         timestamp_ms: tick.timestamp,
         cpu_temperature_c: tick.cpu_temperature(),

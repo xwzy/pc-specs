@@ -35,6 +35,7 @@ use rust_i18n::t;
 use std::collections::{HashSet, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// 全局句柄：让设置页的 getter / setter 闭包（只拿得到 `&App`）也能访问共享模型。
@@ -216,10 +217,10 @@ pub struct ExportState {
     pub poster_busy: bool,
 }
 
-enum MonitorCmd {
-    Interval(u64),
-    /// 温度传感器的读取周期，`None` 表示不读（见 `AppState::temperature_demand`）。
-    Temperature(Option<Duration>),
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MonitorConfig {
+    interval: Duration,
+    temperature: Option<Duration>,
 }
 
 /// 只有告警在用温度（没人看得见读数）时，多久读一次传感器。
@@ -244,9 +245,9 @@ const RULE_LATENCY_FRESH_MS: u64 = 10_000;
 /// 常驻托盘时快照会越来越旧，所以定期只重采这几个，而不是整个快照。
 const LIVE_MODULES: [Module; 4] = [
     Module::Host,
-    Module::Storage,
-    Module::Network,
     Module::Battery,
+    Module::Network,
+    Module::Storage,
 ];
 /// 一轮硬件采集最多算多久：超过了就当有模块卡死，放开「正在刷新」的状态。
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(180);
@@ -262,6 +263,7 @@ pub struct AppState {
     pub snapshot: SystemSnapshot,
     pub loaded: HashSet<Module>,
     pub refreshing: bool,
+    dev_env_refreshing: bool,
     refresh_epoch: u64,
     live_refreshing: bool,
     /// 每次轻量刷新加一，让它的超时看门狗认得出「是不是还是自己那一轮」。
@@ -270,29 +272,24 @@ pub struct AppState {
     pub autostart: bool,
 
     /// 实时采样历史（环形缓冲），最新的在尾部。
-    pub ticks: VecDeque<MonitorTick>,
+    pub ticks: VecDeque<crate::history::Sample>,
     /// 菜单栏面板的走势历史，和 `ticks` 各记各的（见 `push_tick`）。
     pub menu_history: VecDeque<Sample>,
     /// 监控大屏的走势历史：同样各记各的，暂停 / 清空监控页不影响大屏。
     pub wall: History,
     /// 菜单栏面板的长期走势（1 小时到 30 天），按设置存在磁盘上，见 `menubar::archive`。
     pub archive: Archive,
-    /// 与 `ticks` 一一对应的时间标签（`HH:MM:SS`），图表横轴用，推入时生成一次。
-    pub tick_labels: VecDeque<SharedString>,
     pub latest: Option<MonitorTick>,
     pub paused: bool,
-    monitor_tx: mpsc::Sender<MonitorCmd>,
-    monitor_interval: Duration,
-    /// 上次告诉监控线程的温度读取周期。
-    temperature_demand: Option<Duration>,
+    monitor_tx: mpsc::SyncSender<()>,
+    monitor_config: Arc<Mutex<MonitorConfig>>,
 
     pub processes: Vec<ProcessInfo>,
     /// 进程列表每更新一次加一，让进程页只在数据真的变了时才重排。
     pub process_rev: u64,
     /// 最近一次进程列表里有没有有效的网络流量（刚开始统计、还在建基线时没有）。
     pub net_ready: bool,
-    process_stop: Option<mpsc::Sender<()>>,
-    process_epoch: u64,
+    process_feed: Feed,
     /// 正在跑的进程采样线程有没有统计网络流量。需要的人变了就重启它，新线程一开始就把基线建好。
     process_net: bool,
 
@@ -301,10 +298,12 @@ pub struct AppState {
     pub net_show_all: bool,
     pub export: ExportState,
 
-    pub server: Option<ServerHandle>,
+    server: Option<ServerHandle>,
+    server_stopping: bool,
     server_epoch: u64,
 
     pub main_window: Option<AnyWindowHandle>,
+    hidden_windows: HashSet<AnyWindowHandle>,
     pub floating_window: Option<AnyWindowHandle>,
     /// 监控大屏窗口。它是独立的看板，可以在主窗口关掉之后单独留着。
     pub wall_window: Option<AnyWindowHandle>,
@@ -325,12 +324,32 @@ pub struct AppState {
     pub latency: VecDeque<LatencySample>,
     /// 当前 Wi-Fi 连接的细节；没连 Wi-Fi 或还没读到是 `None`。
     pub wifi: Option<WifiInfo>,
-    net_stop: Option<mpsc::Sender<()>>,
-    net_epoch: u64,
+    net_feed: Feed,
     /// 正在跑（或上一次跑）的探测配置。要量的东西变了（换了网络）就重启探测线程。
     net_probe: Option<ProbeConfig>,
     /// 每天的上传 / 下载累计。
     pub usage: Usage,
+}
+
+/// Dropping the stop sender cancels a feed. Its replacement can start only
+/// after the old producer drops its frame channel, even if an OS call stalls.
+enum Feed {
+    Idle,
+    Running(mpsc::Sender<()>),
+    Stopping,
+}
+
+impl Feed {
+    fn running(&self) -> bool {
+        matches!(self, Self::Running(_))
+    }
+
+    fn stop(&mut self) {
+        if let Self::Running(stop) = self {
+            let _ = stop.send(());
+            *self = Self::Stopping;
+        }
+    }
 }
 
 /// 网络探测要量什么。
@@ -355,12 +374,50 @@ impl AppState {
         cx.global::<Hub>().0.clone()
     }
 
+    fn visible(&self, handle: Option<AnyWindowHandle>) -> bool {
+        handle.is_some_and(|handle| !self.hidden_windows.contains(&handle))
+    }
+
+    /// GPUI reports minimization and, where supported, full occlusion.
+    pub fn track_visibility(state: &Entity<Self>, window: &gpui_kit::Window, cx: &mut App) {
+        let handle = window.window_handle();
+        if !window.is_visible() {
+            state.update(cx, |s, _| {
+                s.hidden_windows.insert(handle);
+            });
+        }
+        let state = state.clone();
+        window
+            .observe_window_visibility(move |visibility, _, cx| {
+                state.update(cx, |s, cx| {
+                    if visibility.is_visible() {
+                        s.hidden_windows.remove(&handle);
+                    } else {
+                        s.hidden_windows.insert(handle);
+                    }
+                    s.sync_feeds(cx);
+                });
+            })
+            .detach();
+    }
+
+    pub fn forget_closed_windows(&mut self, cx: &App) {
+        let windows = cx.windows();
+        self.hidden_windows
+            .retain(|handle| windows.contains(handle));
+    }
+
     pub fn new(settings: Settings, cx: &mut Context<Self>) -> Self {
-        let (monitor_tx, monitor_rx) = mpsc::channel();
+        let (monitor_tx, monitor_rx) = mpsc::sync_channel(1);
         let (tick_tx, tick_rx) = async_channel::bounded::<MonitorTick>(1);
         let interval = Duration::from_millis(settings.interval_ms);
+        let monitor_config = Arc::new(Mutex::new(MonitorConfig {
+            interval,
+            temperature: Some(TEMPERATURE_TTL),
+        }));
+        let config = monitor_config.clone();
         spawn_thread("pc-specs-monitor", move || {
-            run_monitor(monitor_rx, tick_tx, interval)
+            run_monitor(monitor_rx, tick_tx, config)
         });
         cx.spawn(async move |this, cx| {
             while let Ok(tick) = tick_rx.recv().await {
@@ -425,6 +482,7 @@ impl AppState {
             snapshot: SystemSnapshot::default(),
             loaded: HashSet::new(),
             refreshing: false,
+            dev_env_refreshing: false,
             refresh_epoch: 0,
             live_refreshing: false,
             live_serial: 0,
@@ -433,18 +491,14 @@ impl AppState {
             menu_history: VecDeque::new(),
             wall: History::default(),
             archive,
-            tick_labels: VecDeque::new(),
             latest: None,
             paused: false,
             monitor_tx,
-            monitor_interval: interval,
-            // 监控线程启动时按这个节奏读；第一个采样之后会按实际需要调整。
-            temperature_demand: Some(TEMPERATURE_TTL),
+            monitor_config,
             processes: Vec::new(),
             process_rev: 0,
             net_ready: false,
-            process_stop: None,
-            process_epoch: 0,
+            process_feed: Feed::Idle,
             process_net: false,
             public_ip: LookupState::Idle,
             net_show_all: false,
@@ -454,8 +508,10 @@ impl AppState {
                 poster_busy: false,
             },
             server: None,
+            server_stopping: false,
             server_epoch: 0,
             main_window: None,
+            hidden_windows: HashSet::new(),
             floating_window: None,
             wall_window: None,
             detail_window: None,
@@ -467,20 +523,20 @@ impl AppState {
             rule_events: rules::load_events(),
             latency: VecDeque::new(),
             wifi: None,
-            net_stop: None,
-            net_epoch: 0,
+            net_feed: Feed::Idle,
             net_probe: None,
             usage: Usage::load(),
         };
         this.apply_language(cx);
         this.apply_theme(cx);
+        this.sync_feeds(cx);
         this.restart_server(cx);
-        this.refresh(cx);
+        this.refresh_hardware(cx);
 
         // 退出前把还没落盘的长期历史写下去（包括正在积累的最后一分钟）。
         cx.on_app_quit(|this, _| {
+            guarded("save usage", || this.usage.save(&mut this.archive));
             guarded("save history", || this.archive.shutdown());
-            guarded("save usage", || this.usage.save());
             async {}
         })
         .detach();
@@ -488,7 +544,7 @@ impl AppState {
         cx.spawn(async move |this, cx| {
             loop {
                 let visible = this.read_with(cx, |this, _| {
-                    this.main_window.is_some() || this.wall_window.is_some()
+                    this.visible(this.main_window) || this.visible(this.wall_window)
                 });
                 let Ok(visible) = visible else { break };
                 let wait = if visible {
@@ -523,7 +579,6 @@ impl AppState {
         if now.theme != before.theme {
             self.apply_theme(cx);
         }
-        self.sync_temperature_demand();
         if now.interval_ms != before.interval_ms || now.history_minutes != before.history_minutes {
             self.trim_history();
         }
@@ -541,20 +596,7 @@ impl AppState {
         if now.floating_net != before.floating_net {
             self.sync_floating(cx);
         }
-        // 大屏上的进程组件开关了，进程采样跟着启停。
-        let wants_processes = |s: &Settings| {
-            s.bigscreen
-                .uses(crate::bigscreen::config::WidgetKind::Processes)
-                || rules::needs_processes(s)
-        };
-        if wants_processes(&now) != wants_processes(&before)
-            || rules::needs_network_probe(&now) != rules::needs_network_probe(&before)
-        {
-            self.sync_feeds(cx);
-        }
-        if rules::needs_sensors(&now) != rules::needs_sensors(&before) {
-            self.sync_temperature_demand();
-        }
+        self.sync_feeds(cx);
         if now.server_enabled != before.server_enabled || now.server_lan != before.server_lan {
             self.restart_server(cx);
         }
@@ -662,8 +704,45 @@ impl AppState {
 
     // ---- 硬件快照 ---------------------------------------------------------
 
-    /// 重新采集所有模块。哪个模块先完成就先落到界面上。
+    /// 用户手动刷新时也更新开发环境。
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_hardware(cx);
+        self.refresh_dev_environment(cx);
+    }
+
+    pub fn ensure_dev_environment(&mut self, cx: &mut Context<Self>) {
+        if !self.is_loaded(Module::DevEnv) {
+            self.refresh_dev_environment(cx);
+        }
+    }
+
+    fn refresh_dev_environment(&mut self, cx: &mut Context<Self>) {
+        if !edition::SYSTEM_MANAGEMENT || self.dev_env_refreshing {
+            return;
+        }
+        let (tx, rx) = async_channel::bounded(1);
+        self.dev_env_refreshing = spawn_thread("pc-specs-dev-env", move || {
+            let _ = tx.send_blocking(modules::collect(Module::DevEnv));
+        });
+        if !self.dev_env_refreshing {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result = rx.recv().await;
+            let _ = this.update(cx, |this, cx| {
+                this.dev_env_refreshing = false;
+                if let Ok(data) = result {
+                    this.snapshot.apply(data);
+                    this.loaded.insert(Module::DevEnv);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 托盘启动只采集系统和硬件数据。打开主窗口时再启动开发工具的版本探测。
+    fn refresh_hardware(&mut self, cx: &mut Context<Self>) {
         if self.refreshing {
             return;
         }
@@ -672,12 +751,14 @@ impl AppState {
         self.refreshing = true;
         // 已加载的页面继续展示旧值，避免每次刷新都切回骨架屏。
 
+        let hardware = Module::ALL.into_iter().filter(|m| *m != Module::DevEnv);
+        let count = hardware.clone().count();
         let (tx, rx) = async_channel::unbounded::<(Module, ModuleData)>();
         let started = spawn_thread("pc-specs-collect", move || {
             // CPU 使用率要在我们自己还没 spawn 一堆子进程时测，所以先单独采它。
             let _ = tx.send_blocking((Module::Cpu, modules::collect(Module::Cpu)));
             std::thread::scope(|scope| {
-                for module in Module::ALL.into_iter().filter(|m| *m != Module::Cpu) {
+                for module in hardware.filter(|m| *m != Module::Cpu) {
                     let tx = tx.clone();
                     scope.spawn(move || {
                         let _ = tx.send_blocking((module, modules::collect(module)));
@@ -691,7 +772,7 @@ impl AppState {
         }
 
         cx.spawn(async move |this, cx| {
-            let mut remaining = Module::ALL.len();
+            let mut remaining = count;
             while let Ok((module, data)) = rx.recv().await {
                 remaining = remaining.saturating_sub(1);
                 let alive = this.update(cx, |this, cx| {
@@ -752,14 +833,22 @@ impl AppState {
         let serial = self.live_serial;
         let epoch = self.refresh_epoch;
         let (tx, rx) = async_channel::unbounded::<ModuleData>();
+        let visible = self.visible(self.main_window) || self.visible(self.wall_window);
         let started = spawn_thread("pc-specs-live", move || {
-            std::thread::scope(|scope| {
-                for module in LIVE_MODULES {
-                    let tx = tx.clone();
-                    scope.spawn(move || {
-                        let _ = tx.send_blocking(modules::collect(module));
-                    });
+            let collect = |batch: &[Module]| {
+                for &module in batch {
+                    let _ = tx.send_blocking(modules::collect(module));
                 }
+            };
+            // In the tray, run host, battery and network on this worker. A slow
+            // volume has its own worker so it cannot hold up their updates.
+            let batch_size = if visible { 1 } else { LIVE_MODULES.len() - 1 };
+            let (first, rest) = LIVE_MODULES.split_at(batch_size);
+            std::thread::scope(|scope| {
+                for batch in rest.chunks(batch_size) {
+                    scope.spawn(move || collect(batch));
+                }
+                collect(first);
             });
         });
         if !started {
@@ -854,12 +943,12 @@ impl AppState {
             && self
                 .settings
                 .menu_bar
-                .visible()
+                .shown()
                 .any(|item| item.metric == crate::menubar::config::Metric::Temperature);
         // 窗口、菜单栏弹窗、监控大屏开着，或者菜单栏上有温度项：读数有人看，按正常节奏读。
-        if self.main_window.is_some()
-            || self.detail_window.is_some()
-            || self.wall_window.is_some()
+        if self.visible(self.main_window)
+            || self.visible(self.detail_window)
+            || self.visible(self.wall_window)
             || on_menu_bar
         {
             Some(TEMPERATURE_TTL)
@@ -870,15 +959,15 @@ impl AppState {
         }
     }
 
-    fn sync_temperature_demand(&mut self) {
-        let foreground = self.main_window.is_some()
-            || self.detail_window.is_some()
-            || self.wall_window.is_some()
-            || self.floating_window.is_some();
+    fn sync_monitor_config(&mut self) {
+        let foreground = self.visible(self.main_window)
+            || self.visible(self.detail_window)
+            || self.visible(self.wall_window)
+            || self.visible(self.floating_window);
         let menu_refresh = self.tray.as_ref().and_then(|_| {
             self.settings
                 .menu_bar
-                .visible()
+                .shown()
                 .next()
                 .map(|_| self.settings.menu_bar.refresh_ms)
         });
@@ -888,32 +977,37 @@ impl AppState {
             menu_refresh,
             self.settings.alerts && self.settings.rules.iter().any(|rule| rule.enabled),
         );
-        if interval != self.monitor_interval {
-            self.monitor_interval = interval;
-            let _ = self
-                .monitor_tx
-                .send(MonitorCmd::Interval(interval.as_millis() as u64));
-        }
-        let demand = self.temperature_demand();
-        if demand != self.temperature_demand {
-            self.temperature_demand = demand;
-            let _ = self.monitor_tx.send(MonitorCmd::Temperature(demand));
+        let config = MonitorConfig {
+            interval,
+            temperature: self.temperature_demand(),
+        };
+        let mut latest = self
+            .monitor_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *latest != config {
+            *latest = config;
+            let _ = self.monitor_tx.try_send(());
         }
     }
 
     fn push_tick(&mut self, tick: MonitorTick, cx: &mut Context<Self>) {
-        self.sync_temperature_demand();
         // 把磁盘 / 网卡 / GPU 的实时读数写回快照，各页面直接读快照即可。
         self.snapshot.merge_tick(&tick);
         // 菜单栏面板的走势单独记：「暂停」只冻结实时监控页的图表。
         let sample = Sample::new(&tick, &self.snapshot, &self.settings);
         // 睡眠、合盖之后醒来：中间那段没有采样，实时走势不该把两头连成一条线，从醒来这一刻重画。
-        let gap_ms = (self.settings.interval_ms * 4).max(5_000);
-        if self
-            .menu_history
-            .back()
-            .is_some_and(|last| sample.timestamp.saturating_sub(last.timestamp) > gap_ms)
-        {
+        let gap_ms = (self
+            .monitor_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .interval
+            .as_millis() as u64
+            * 4)
+        .max(5_000);
+        if self.menu_history.back().is_some_and(|last| {
+            sample.timestamp < last.timestamp || sample.timestamp - last.timestamp > gap_ms
+        }) {
             self.menu_history.clear();
         }
         self.archive
@@ -932,12 +1026,10 @@ impl AppState {
             tick.net_rx_bps as f64 * tick.elapsed_secs,
             tick.net_tx_bps as f64 * tick.elapsed_secs,
         );
-        self.usage.save_if_due();
+        self.usage.save_if_due(&mut self.archive);
         self.evaluate_rules(&tick, cx);
         if !self.paused {
-            self.tick_labels
-                .push_back(crate::fmt::clock(tick.timestamp).into());
-            self.ticks.push_back(tick.clone());
+            self.ticks.push_back(crate::history::Sample::from(&tick));
             self.trim_history();
         }
         self.latest = Some(tick);
@@ -947,14 +1039,12 @@ impl AppState {
     fn trim_history(&mut self) {
         crate::history::trim(
             &mut self.ticks,
-            &mut self.tick_labels,
             Duration::from_secs(u64::from(self.settings.history_minutes) * 60),
         );
     }
 
     pub fn clear_history(&mut self, cx: &mut Context<Self>) {
         self.ticks.clear();
-        self.tick_labels.clear();
         cx.notify();
     }
 
@@ -1033,24 +1123,27 @@ impl AppState {
             settings: &self.settings,
             tick: Some(tick),
             snapshot: &self.snapshot,
-            processes: if self.process_stop.is_some() {
+            processes: if self.process_feed.running() {
                 &self.processes
             } else {
                 &[]
             },
-            latency: fresh_latency(&self.latency, self.net_stop.is_some()),
+            latency: fresh_latency(&self.latency, self.net_feed.running()),
         };
         let fired = self
             .rule_engine
             .evaluate(&self.settings.rules, &inputs, Instant::now());
-        for firing in fired {
-            self.deliver(&firing, true, cx);
+        for firing in &fired {
+            self.deliver(firing, true, cx);
+        }
+        if !fired.is_empty() {
+            rules::save_events(&self.rule_events, &mut self.archive);
         }
     }
 
     /// 进程采样没在跑的时候列表是旧的，规则不该拿它下结论。
     fn rule_processes(&self) -> &[ProcessInfo] {
-        if self.process_stop.is_some() {
+        if self.process_feed.running() {
             &self.processes
         } else {
             &[]
@@ -1096,7 +1189,6 @@ impl AppState {
             while self.rule_events.len() > rules::MAX_EVENTS {
                 self.rule_events.pop_front();
             }
-            rules::save_events(&self.rule_events);
         }
     }
 
@@ -1116,7 +1208,7 @@ impl AppState {
             tick: self.latest.as_ref(),
             snapshot: &self.snapshot,
             processes: self.rule_processes(),
-            latency: fresh_latency(&self.latency, self.net_stop.is_some()),
+            latency: fresh_latency(&self.latency, self.net_feed.running()),
         };
         let reading = rules::read(rule.metric, &inputs).unwrap_or(Reading {
             value: rule.threshold,
@@ -1242,7 +1334,7 @@ impl AppState {
 
     pub fn clear_rule_events(&mut self, cx: &mut Context<Self>) {
         self.rule_events.clear();
-        rules::save_events(&self.rule_events);
+        rules::save_events(&self.rule_events, &mut self.archive);
         cx.notify();
     }
 
@@ -1250,24 +1342,27 @@ impl AppState {
 
     /// 窗口、页面、菜单栏面板或设置变了之后调用：该开的数据源开起来，没人要的关掉。
     pub fn sync_feeds(&mut self, cx: &mut Context<Self>) {
-        self.sync_temperature_demand();
+        self.sync_monitor_config();
         self.sync_process_feed(cx);
         self.sync_net_feed(cx);
     }
 
     fn sync_process_feed(&mut self, cx: &mut Context<Self>) {
+        if !edition::PROCESS_LIST {
+            return;
+        }
         if rules::needs_processes(&self.settings)
-            || (self.page == Page::Processes && self.main_window.is_some())
-            || (self.detail_window.is_some()
+            || (self.page == Page::Processes && self.visible(self.main_window))
+            || (self.visible(self.detail_window)
                 && self.detail_metric.is_some_and(|m| m.needs_processes()))
-            || (self.wall_window.is_some()
+            || (self.visible(self.wall_window)
                 && self
                     .settings
                     .bigscreen
                     .uses(crate::bigscreen::config::WidgetKind::Processes))
         {
             let net = self.process_net_wanted();
-            if self.process_stop.is_none() || self.process_net != net {
+            if !self.process_feed.running() || self.process_net != net {
                 self.start_process_feed(cx, net);
             }
         } else {
@@ -1279,13 +1374,15 @@ impl AppState {
     fn process_net_wanted(&self) -> bool {
         edition::PROCESS_LIST
             && pc_specs_core::process_net::SUPPORTED
-            && self.detail_window.is_some()
+            && self.visible(self.detail_window)
             && self.detail_metric == Some(crate::menubar::config::Metric::Network)
     }
 
     fn start_process_feed(&mut self, cx: &mut Context<Self>, net: bool) {
         self.stop_process_feed();
-        let epoch = self.process_epoch;
+        if !matches!(self.process_feed, Feed::Idle) {
+            return;
+        }
         self.process_net = net;
         self.net_ready = false;
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -1327,43 +1424,52 @@ impl AppState {
             }
         });
         if started {
-            self.process_stop = Some(stop_tx);
+            self.process_feed = Feed::Running(stop_tx);
         } else {
             return;
         }
         cx.spawn(async move |this, cx| {
             while let Ok((list, net_ready)) = rx.recv().await {
-                let accepted = this
+                if this
                     .update(cx, |this, cx| {
-                        if this.process_epoch != epoch {
-                            return false;
+                        if !this.process_feed.running() {
+                            return;
                         }
                         this.processes = list;
                         this.net_ready = net_ready;
                         this.process_rev += 1;
                         cx.notify();
-                        true
                     })
-                    .unwrap_or(false);
-                if !accepted {
-                    break;
+                    .is_err()
+                {
+                    return;
                 }
             }
+            let _ = this.update(cx, |this, cx| {
+                let restart = matches!(this.process_feed, Feed::Stopping);
+                this.process_feed = Feed::Idle;
+                if restart {
+                    this.sync_process_feed(cx);
+                }
+            });
         })
         .detach();
     }
 
     fn stop_process_feed(&mut self) {
-        // 丢弃 Sender 即通知线程退出。
-        self.process_stop = None;
-        self.process_epoch = self.process_epoch.wrapping_add(1);
+        if self.process_feed.running() {
+            self.processes = Vec::new();
+            self.net_ready = false;
+            self.process_rev += 1;
+        }
+        self.process_feed.stop();
     }
 
     /// 现在要不要探测网络、探测什么。看得见读数（网络页、菜单栏的网络面板）
     /// 或者有规则在用的时候才量，否则不发任何连接。
     fn net_probe_config(&self) -> Option<ProbeConfig> {
-        let on_page = self.page == Page::Network && self.main_window.is_some();
-        let on_panel = self.detail_window.is_some()
+        let on_page = self.page == Page::Network && self.visible(self.main_window);
+        let on_panel = self.visible(self.detail_window)
             && self.detail_metric == Some(crate::menubar::config::Metric::Network);
         // 商店版不联网，不量延迟，只读 Wi-Fi 详情，所以只有看得见读数时才需要探测线程。
         let probing = edition::NETWORK_ACCESS && rules::needs_network_probe(&self.settings);
@@ -1382,6 +1488,9 @@ impl AppState {
         } else {
             Vec::new()
         };
+        if !edition::NETWORK_ACCESS && wifi.is_empty() {
+            return None;
+        }
         Some(ProbeConfig {
             gateway: network.default_gateway.clone(),
             dns: network.dns_servers.clone(),
@@ -1392,7 +1501,7 @@ impl AppState {
     fn sync_net_feed(&mut self, cx: &mut Context<Self>) {
         match self.net_probe_config() {
             Some(config) => {
-                if self.net_stop.is_none() || self.net_probe.as_ref() != Some(&config) {
+                if !self.net_feed.running() || self.net_probe.as_ref() != Some(&config) {
                     self.start_net_feed(config, cx);
                 }
             }
@@ -1402,7 +1511,9 @@ impl AppState {
 
     fn start_net_feed(&mut self, config: ProbeConfig, cx: &mut Context<Self>) {
         self.stop_net_feed();
-        let epoch = self.net_epoch;
+        if !matches!(self.net_feed, Feed::Idle) {
+            return;
+        }
         // 换了网络、或者探测停过一阵：旧的延迟和新的接不上，从头画。
         let now = pc_specs_core::util::now_ms();
         let stale = self
@@ -1461,7 +1572,12 @@ impl AppState {
                     break;
                 }
                 // 保持两秒一轮：这一轮用掉的时间（断网时要等超时）算在里面。
-                let wait = PROBE_EVERY
+                let cadence = if edition::NETWORK_ACCESS {
+                    PROBE_EVERY
+                } else {
+                    WIFI_EVERY
+                };
+                let wait = cadence
                     .saturating_sub(began.elapsed())
                     .max(Duration::from_millis(250));
                 if !matches!(stop_rx.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
@@ -1472,31 +1588,36 @@ impl AppState {
         if !started {
             return;
         }
-        self.net_stop = Some(stop_tx);
+        self.net_feed = Feed::Running(stop_tx);
         cx.spawn(async move |this, cx| {
             while let Ok(frame) = rx.recv().await {
-                let accepted = this
+                if this
                     .update(cx, |this, cx| {
-                        if this.net_epoch != epoch {
-                            return false;
+                        if !this.net_feed.running() {
+                            return;
                         }
                         guarded("push net frame", || this.push_net_frame(frame));
                         cx.notify();
-                        true
                     })
-                    .unwrap_or(false);
-                if !accepted {
-                    break;
+                    .is_err()
+                {
+                    return;
                 }
             }
+            let _ = this.update(cx, |this, cx| {
+                let restart = matches!(this.net_feed, Feed::Stopping);
+                this.net_feed = Feed::Idle;
+                if restart {
+                    this.sync_net_feed(cx);
+                }
+            });
         })
         .detach();
     }
 
     fn stop_net_feed(&mut self) {
-        // 丢弃 Sender 即通知线程退出。
-        self.net_stop = None;
-        self.net_epoch = self.net_epoch.wrapping_add(1);
+        self.net_feed.stop();
+        self.wifi = None;
     }
 
     fn push_net_frame(&mut self, frame: NetFrame) {
@@ -1513,47 +1634,44 @@ impl AppState {
 
     /// 流量累计清零，重新开始。
     pub fn reset_usage(&mut self, cx: &mut Context<Self>) {
-        self.usage.reset();
+        self.usage.reset(&mut self.archive);
         cx.notify();
     }
 
     // ---- 本地 HTTP 服务 -----------------------------------------------------
 
     pub fn restart_server(&mut self, cx: &mut Context<Self>) {
-        self.server_epoch += 1;
-        let epoch = self.server_epoch;
-        let old = self.server.take();
-        let enabled = edition::LOCAL_SERVER && self.settings.server_enabled;
+        if self.server_stopping {
+            return;
+        }
+        self.server_epoch = self.server_epoch.wrapping_add(1);
+        if let Some(old) = self.server.take() {
+            self.server_stopping = true;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .spawn(async move { drop(old) })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.server_stopping = false;
+                    // Settings may have changed while the old listener drained.
+                    this.restart_server(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
+        if !(edition::LOCAL_SERVER && self.settings.server_enabled) {
+            return;
+        }
         let ip = if self.settings.server_lan {
             IpAddr::V4(Ipv4Addr::UNSPECIFIED)
         } else {
             IpAddr::V4(Ipv4Addr::LOCALHOST)
         };
-        let addr = SocketAddr::new(ip, server::DEFAULT_PORT);
-        let (tx, rx) = async_channel::bounded(1);
-        // 关闭旧服务会等端口释放，新服务要等它释放完才能绑定，所以两步放在同一个后台线程里。
-        std::thread::spawn(move || {
-            drop(old);
-            let handle = enabled.then(|| server::spawn(addr));
-            let _ = tx.send_blocking(handle);
-        });
+        self.server = Some(server::spawn(SocketAddr::new(ip, server::DEFAULT_PORT)));
+        let epoch = self.server_epoch;
         cx.spawn(async move |this, cx| {
-            let Ok(handle) = rx.recv().await else { return };
-            let accepted = this
-                .update(cx, |this, cx| {
-                    if this.server_epoch != epoch {
-                        return Some(handle);
-                    }
-                    this.server = handle;
-                    cx.notify();
-                    None
-                })
-                .ok()
-                .flatten();
-            if let Some(stale) = accepted {
-                std::thread::spawn(move || drop(stale));
-                return;
-            }
             // 启动是异步的：轮询几次，把 Starting 刷新成 Listening / Failed。
             for _ in 0..10 {
                 cx.background_executor()
@@ -1578,7 +1696,11 @@ impl AppState {
     }
 
     pub fn server_status(&self) -> Option<ServerStatus> {
-        self.server.as_ref().map(|s| s.status())
+        if self.server_stopping && self.settings.server_enabled {
+            Some(ServerStatus::Starting)
+        } else {
+            self.server.as_ref().map(|s| s.status())
+        }
     }
 
     // ---- 导出 -------------------------------------------------------------
@@ -1726,7 +1848,10 @@ impl AppState {
             if wanted && !open {
                 let saved = state.read(cx).settings.floating_pos;
                 let handle = crate::floating::open(state.clone(), saved, cx);
-                state.update(cx, |s, _| s.floating_window = handle);
+                state.update(cx, |s, _| {
+                    s.floating_window = handle;
+                    s.sync_monitor_config();
+                });
             }
         });
     }
@@ -1734,7 +1859,6 @@ impl AppState {
     /// 大屏窗口刚打开：把会变的几项补采一遍，温度和进程也按需要启动。
     pub fn wall_opened(&mut self, handle: AnyWindowHandle, cx: &mut Context<Self>) {
         self.wall_window = Some(handle);
-        self.sync_temperature_demand();
         self.sync_feeds(cx);
         self.refresh_live(cx);
         cx.notify();
@@ -1928,35 +2052,37 @@ fn monitor_interval(
 /// 采样器是对 sysinfo / 系统接口的一层封装，任何一次 panic 都不该让实时监控就此停摆：
 /// 出事就丢掉旧的采样器，隔一会儿换个新的继续采。
 fn run_monitor(
-    commands: mpsc::Receiver<MonitorCmd>,
+    commands: mpsc::Receiver<()>,
     ticks: async_channel::Sender<MonitorTick>,
-    mut interval: Duration,
+    latest: Arc<Mutex<MonitorConfig>>,
 ) {
-    let mut temperature = Some(TEMPERATURE_TTL);
+    let read_config = || *latest.lock().unwrap_or_else(|e| e.into_inner());
+    let mut config = read_config();
     let mut sampler = guarded("sampler init", Sampler::new);
+    if let Some(sampler) = sampler.as_mut() {
+        sampler.set_temperature_interval(config.temperature);
+    }
     // 基线建立后至少等一个 CPU 最小刷新窗口，首个采样才有意义。
     let mut next = Instant::now() + Duration::from_millis(300);
     loop {
         match commands.recv_timeout(next.saturating_duration_since(Instant::now())) {
-            Ok(MonitorCmd::Interval(ms)) => {
-                let new_interval = Duration::from_millis(ms);
-                // 间隔变短时尽快落到新节奏上；变长则保持当前计划，下次采样后生效。
-                if new_interval < interval {
-                    next = next.min(Instant::now() + new_interval);
+            Ok(()) => {
+                let updated = read_config();
+                if updated.interval < config.interval {
+                    next = next.min(Instant::now() + updated.interval);
                 }
-                interval = new_interval;
-            }
-            Ok(MonitorCmd::Temperature(every)) => {
-                temperature = every;
-                if let Some(sampler) = sampler.as_mut() {
-                    sampler.set_temperature_interval(every);
+                if updated.temperature != config.temperature
+                    && let Some(sampler) = sampler.as_mut()
+                {
+                    sampler.set_temperature_interval(updated.temperature);
                 }
+                config = updated;
             }
             Err(RecvTimeoutError::Timeout) => {
                 if sampler.is_none() {
                     sampler = guarded("sampler init", Sampler::new);
                     if let Some(sampler) = sampler.as_mut() {
-                        sampler.set_temperature_interval(temperature);
+                        sampler.set_temperature_interval(config.temperature);
                     }
                 }
                 let tick = sampler
@@ -1967,7 +2093,7 @@ fn run_monitor(
                         if ticks.send_blocking(tick).is_err() {
                             break;
                         }
-                        next = Instant::now() + interval;
+                        next = Instant::now() + config.interval;
                     }
                     None => {
                         sampler = None;

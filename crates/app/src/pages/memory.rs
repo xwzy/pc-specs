@@ -115,9 +115,7 @@ pub fn render(s: &AppState, cx: &App) -> AnyElement {
     let live = ui::section("mem-live", t!("mem_usage_live").into_owned()).child(
         div().h(rems(10.)).w_full().child(chart::area(
             "mem-live-chart",
-            chart::series(s, Some(120), |t| {
-                fmt::ratio(t.mem_used_bytes, t.mem_total_bytes) as f64
-            }),
+            chart::series(s, Some(120), |t| t.memory_percent as f64),
             Some((0.0, 100.0)),
             palette[1],
             |v| format!("{v:.0}%"),

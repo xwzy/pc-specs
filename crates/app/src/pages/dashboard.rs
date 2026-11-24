@@ -11,7 +11,7 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
     rems,
 };
-use pc_specs_core::model::{MonitorTick, NetworkInterface};
+use pc_specs_core::model::{GpuTick, NetworkInterface};
 use rust_i18n::t;
 
 /// 走势卡片里展示最近多少个采样。
@@ -86,9 +86,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
         Some(mem_pct),
         Some(chart::sparkline(
             "dash-spark-mem",
-            chart::series(s, Some(SPARK_POINTS), |t| {
-                fmt::ratio(t.mem_used_bytes, t.mem_total_bytes) as f64
-            }),
+            chart::series(s, Some(SPARK_POINTS), |t| t.memory_percent as f64),
             Some((0.0, 100.0)),
             palette[1],
         )),
@@ -99,14 +97,13 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
 
     // GPU：只有读得到占用率时才放，免得出现一张永远是「—」的卡片。
     if let Some(gpu) = snap.gpus.iter().find(|g| g.utilization.is_some()) {
-        let util_of = |tick: &MonitorTick, name: &str| {
-            tick.gpus
-                .iter()
+        let util_of = |gpus: &[GpuTick], name: &str| {
+            gpus.iter()
                 .find(|g| g.name == name)
                 .and_then(|g| g.utilization)
         };
         let util = latest
-            .and_then(|t| util_of(t, &gpu.name))
+            .and_then(|t| util_of(&t.gpus, &gpu.name))
             .or(gpu.utilization)
             .unwrap_or(0.0);
         let name = gpu.name.clone();
@@ -120,7 +117,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
             Some(chart::sparkline(
                 "dash-spark-gpu",
                 chart::series(s, Some(SPARK_POINTS), move |t| {
-                    util_of(t, &name).unwrap_or(0.0) as f64
+                    util_of(&t.gpus, &name).unwrap_or(0.0) as f64
                 }),
                 Some((0.0, 100.0)),
                 palette[3],
@@ -217,7 +214,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
                 chart::sparkline(
                     "dash-spark-temp",
                     chart::series(s, Some(SPARK_POINTS), move |t| {
-                        t.max_temperature()
+                        t.max_temperature
                             .map_or(0.0, |v| fmt::temp_chart_value(v, temp_unit))
                     }),
                     None,

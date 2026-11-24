@@ -76,7 +76,8 @@ pub fn open(
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
-    match gpui_kit::open_window(options, cx, |_, cx| {
+    match gpui_kit::open_window(options, cx, |window, cx| {
+        AppState::track_visibility(&state, window, cx);
         cx.new(|cx| FloatingWidget::new(state, cx))
     }) {
         Ok((handle, _)) => Some(handle),

@@ -168,6 +168,17 @@ impl Default for Settings {
     }
 }
 
+/// Replace a JSON file atomically. Calls for the same path must be serialized.
+pub(crate) fn write_json(path: &std::path::Path, value: &impl Serialize) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let bytes = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(tmp, path)
+}
+
 impl Settings {
     pub fn path() -> Option<PathBuf> {
         dirs::config_dir().map(|d| d.join("pc-specs").join("settings.json"))
@@ -191,15 +202,7 @@ impl Settings {
     /// 写入失败只记日志：设置丢失不应打断使用。
     pub fn save(&self) {
         let Some(path) = Self::path() else { return };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("json.tmp");
-        let result = serde_json::to_string_pretty(self)
-            .map_err(std::io::Error::other)
-            .and_then(|text| std::fs::write(&tmp, text))
-            .and_then(|_| std::fs::rename(&tmp, &path));
-        if let Err(e) = result {
+        if let Err(e) = write_json(&path, self) {
             tracing::warn!("failed to save settings: {e}");
         }
     }

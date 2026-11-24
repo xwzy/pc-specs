@@ -2,13 +2,13 @@
 //!
 //! 先启动的实例锁住 `instance.lock`（进程退出时系统自动释放，崩溃也不会留下过期的锁），
 //! 同时在回环地址上随机监听一个端口，把端口号写进 `instance.port`；后启动的读到端口连上去，
-//! 对方收到连接就是「请显示窗口」。端口单独存一个文件，因为 Windows 上被锁住的文件别的进程读不了。
+//! 对方收到唤醒指令就是「请显示窗口」。端口单独存一个文件，因为 Windows 上被锁住的文件别的进程读不了。
 //!
 //! 锁文件打不开、文件系统不支持锁时尽力启动；已有实例持锁时始终退出，避免重复后台采集。
 
 use pc_specs_core::edition;
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -71,6 +71,17 @@ pub fn acquire(wake: async_channel::Sender<()>, wake_existing: bool) -> Option<I
     }
 }
 
+const WAKE_MESSAGE: &[u8; 5] = b"show\n";
+
+fn wants_window(stream: &mut TcpStream) -> bool {
+    let mut message = [0; WAKE_MESSAGE.len()];
+    stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .is_ok()
+        && stream.read_exact(&mut message).is_ok()
+        && &message == WAKE_MESSAGE
+}
+
 fn listen(dir: &Path, wake: async_channel::Sender<()>) {
     let port_file = dir.join("instance.port");
     // 先清掉上一个实例留下的端口号，免得后来者连到别的程序上。
@@ -89,10 +100,15 @@ fn listen(dir: &Path, wake: async_channel::Sender<()>) {
         .spawn(move || {
             for connection in listener.incoming() {
                 match connection {
-                    Ok(_) => match wake.try_send(()) {
-                        Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
-                        Err(async_channel::TrySendError::Closed(())) => break,
-                    },
+                    Ok(mut stream) => {
+                        if !wants_window(&mut stream) {
+                            continue;
+                        }
+                        match wake.try_send(()) {
+                            Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
+                            Err(async_channel::TrySendError::Closed(())) => break,
+                        }
+                    }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e) => {
                         tracing::warn!("instance listener stopped: {e}");
@@ -113,10 +129,31 @@ fn wake_running(dir: &Path) -> bool {
             let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
             if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(300))
             {
-                return stream.write_all(b"show\n").is_ok();
+                return stream.write_all(WAKE_MESSAGE).is_ok();
             }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_explicit_wake_message_opens_a_window() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        for (message, wanted) in [
+            (&b""[..], false),
+            (b"show", false),
+            (b"GET /", false),
+            (WAKE_MESSAGE.as_slice(), true),
+        ] {
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client.write_all(message).unwrap();
+            client.shutdown(std::net::Shutdown::Write).unwrap();
+            assert_eq!(wants_window(&mut listener.accept().unwrap().0), wanted);
+        }
+    }
 }

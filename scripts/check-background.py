@@ -47,6 +47,7 @@ def main():
     parser.add_argument("--warmup", type=positive, default=30)
     parser.add_argument("--interval", type=positive, default=5)
     parser.add_argument("--max-rss-growth", type=positive, default=32, help="MiB above the first post-warmup sample")
+    parser.add_argument("--max-cpu", type=positive, help="maximum post-warmup average CPU, percent of one core")
     parser.add_argument("--max-thread-growth", type=positive, default=4)
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("dist/background-check.json"))
     args = parser.parse_args()
@@ -58,9 +59,23 @@ def main():
         parser.error("build the release binary first: cargo build --release --locked -p pc-specs")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    report = {"platform": sys.platform, "samples": [], "errors": [], "passed": False}
+    report = {"platform": sys.platform, "errors": [], "passed": False}
+    first = last = None
+    rss_peak = threads_peak = 0
     log_path = args.output.with_suffix(".log")
-    with log_path.open("w") as log:
+    if args.binary.resolve() in (args.output.resolve(), log_path.resolve()):
+        parser.error("output files must be different from the binary")
+    if args.output.resolve() == log_path.resolve():
+        parser.error("the report and application log must have different paths")
+    with log_path.open("w") as log, args.output.open("w", encoding="utf-8") as output:
+        # Append rows in place. Rewriting a growing report every five seconds
+        # during a multi-day run would make the checker itself generate heavy I/O.
+        output.write('{"samples": [')
+        tail = output.tell()
+        separator = ""
+        progress_tail = "], " + json.dumps(report)[1:]
+        output.write(progress_tail)
+        output.flush()
         process = subprocess.Popen([str(args.binary.resolve()), "--background"], stdout=log, stderr=log)
         started = time.monotonic()
         try:
@@ -69,8 +84,19 @@ def main():
                 if process.poll() is not None:
                     report["errors"].append(f"application exited early ({process.returncode}); close any existing instance before testing")
                     break
-                report["samples"].append(sample(process.pid, elapsed))
-                args.output.write_text(json.dumps(report, indent=2) + "\n")
+                row = sample(process.pid, elapsed)
+                output.seek(tail)
+                output.write(separator + "\n" + json.dumps(row))
+                tail = output.tell()
+                separator = ","
+                output.write(progress_tail)
+                output.flush()
+                if elapsed >= args.warmup:
+                    if first is None:
+                        first = row
+                    last = row
+                    rss_peak = max(rss_peak, row["rss_mib"])
+                    threads_peak = max(threads_peak, row["threads"])
                 if elapsed >= args.duration:
                     break
                 time.sleep(min(args.interval, args.duration - elapsed))
@@ -89,27 +115,29 @@ def main():
                     process.kill()
                     process.wait()
 
-    steady = [row for row in report["samples"] if row["elapsed_s"] >= args.warmup]
-    if len(steady) < 2:
-        report["errors"].append("insufficient post-warmup samples")
-    else:
-        first, last = steady[0], steady[-1]
-        report["steady"] = {
-            "duration_s": round(last["elapsed_s"] - first["elapsed_s"], 3),
-            "average_cpu_percent_of_one_core": round(100 * (last["cpu_s"] - first["cpu_s"]) / (last["elapsed_s"] - first["elapsed_s"]), 3),
-            "rss_first_mib": first["rss_mib"],
-            "rss_last_mib": last["rss_mib"],
-            "rss_peak_mib": max(row["rss_mib"] for row in steady),
-            "threads_first": first["threads"],
-            "threads_peak": max(row["threads"] for row in steady),
-        }
-        if report["steady"]["rss_peak_mib"] - first["rss_mib"] > args.max_rss_growth:
-            report["errors"].append("memory growth exceeded the selected limit")
-        if report["steady"]["threads_peak"] - first["threads"] > args.max_thread_growth:
-            report["errors"].append("thread growth exceeded the selected limit")
-    report["passed"] = not report["errors"]
-    args.output.write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps({key: value for key, value in report.items() if key != "samples"}, ensure_ascii=False, indent=2))
+        if first is last:
+            report["errors"].append("insufficient post-warmup samples")
+        else:
+            report["steady"] = {
+                "duration_s": round(last["elapsed_s"] - first["elapsed_s"], 3),
+                "average_cpu_percent_of_one_core": round(100 * (last["cpu_s"] - first["cpu_s"]) / (last["elapsed_s"] - first["elapsed_s"]), 3),
+                "rss_first_mib": first["rss_mib"],
+                "rss_last_mib": last["rss_mib"],
+                "rss_peak_mib": rss_peak,
+                "threads_first": first["threads"],
+                "threads_peak": threads_peak,
+            }
+            if report["steady"]["rss_peak_mib"] - first["rss_mib"] > args.max_rss_growth:
+                report["errors"].append("memory growth exceeded the selected limit")
+            if report["steady"]["threads_peak"] - first["threads"] > args.max_thread_growth:
+                report["errors"].append("thread growth exceeded the selected limit")
+            if args.max_cpu and report["steady"]["average_cpu_percent_of_one_core"] > args.max_cpu:
+                report["errors"].append("average CPU exceeded the selected limit")
+        report["passed"] = not report["errors"]
+        output.seek(tail)
+        output.write("\n], " + json.dumps(report, indent=2)[1:] + "\n")
+        output.truncate()
+    print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["passed"] else 1
 
 

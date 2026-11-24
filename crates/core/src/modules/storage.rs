@@ -244,42 +244,50 @@ fn match_windows_drive_kind(drives: &[WinDriveKind], name: &str) -> Option<Strin
 /// 系统自带的 SMART 状态，不依赖 smartctl。
 #[cfg(target_os = "macos")]
 fn native_enrich(items: &mut [StorageInfo]) {
-    let handles: Vec<_> = items
-        .iter()
-        .map(|it| it.mount_point.clone().unwrap_or_default())
-        .map(|mount| {
-            std::thread::spawn(move || {
-                crate::util::run_stdout_timeout(
-                    "/usr/sbin/diskutil",
-                    &["info", &mount],
-                    Duration::from_secs(6),
-                )
-            })
+    // Bound worker stacks as well as subprocesses on hosts with many mounts.
+    if items.is_empty() {
+        return;
+    }
+    let batch_size = items.len().div_ceil(4);
+    let (first, rest) = items.split_at_mut(batch_size);
+    std::thread::scope(|scope| {
+        for batch in rest.chunks_mut(batch_size) {
+            scope.spawn(move || batch.iter_mut().for_each(enrich_volume));
+        }
+        first.iter_mut().for_each(enrich_volume);
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn enrich_volume(it: &mut StorageInfo) {
+    let Some(mount) = it.mount_point.as_deref() else {
+        return;
+    };
+    let Some(text) = crate::util::run_stdout_timeout(
+        "/usr/sbin/diskutil",
+        &["info", mount],
+        Duration::from_secs(6),
+    ) else {
+        return;
+    };
+    let field = |key: &str| {
+        text.lines().find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            (k.trim() == key).then(|| v.trim().to_string())
         })
-        .collect();
-    for (it, h) in items.iter_mut().zip(handles) {
-        let Some(text) = h.join().ok().flatten() else {
-            continue;
-        };
-        let field = |key: &str| {
-            text.lines().find_map(|l| {
-                let (k, v) = l.split_once(':')?;
-                (k.trim() == key).then(|| v.trim().to_string())
-            })
-        };
-        let protocol = field("Protocol").unwrap_or_default().to_ascii_lowercase();
-        if protocol.contains("fabric") || protocol.contains("nvme") || protocol.contains("pci") {
-            it.kind = "NVMe".to_string();
-        } else if it.kind == "Unknown" && protocol.contains("usb") {
-            it.kind = "Removable".to_string();
-        }
-        if it.smart_health.is_none() {
-            it.smart_health = field("SMART Status").and_then(|s| match s.as_str() {
-                "Verified" => Some("OK".to_string()),
-                "Failing" => Some("Failing".to_string()),
-                _ => None,
-            });
-        }
+    };
+    let protocol = field("Protocol").unwrap_or_default().to_ascii_lowercase();
+    if protocol.contains("fabric") || protocol.contains("nvme") || protocol.contains("pci") {
+        it.kind = "NVMe".to_string();
+    } else if it.kind == "Unknown" && protocol.contains("usb") {
+        it.kind = "Removable".to_string();
+    }
+    if it.smart_health.is_none() {
+        it.smart_health = field("SMART Status").and_then(|s| match s.as_str() {
+            "Verified" => Some("OK".to_string()),
+            "Failing" => Some("Failing".to_string()),
+            _ => None,
+        });
     }
 }
 

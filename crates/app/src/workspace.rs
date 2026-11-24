@@ -624,6 +624,7 @@ pub fn open_main_window(cx: &mut App) {
         ..TitleBar::window_options()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
+        AppState::track_visibility(&state, window, cx);
         window.set_window_title(&t!("app_name"));
         let state = state.clone();
         cx.new(|cx| Workspace::new(state, window, cx))
@@ -633,6 +634,7 @@ pub fn open_main_window(cx: &mut App) {
             // 窗口可能关了很久，先把会变的几项补采一遍。
             state.update(cx, |s, cx| {
                 s.main_window = Some(handle);
+                s.ensure_dev_environment(cx);
                 s.sync_feeds(cx);
                 s.refresh_live(cx);
             });
@@ -691,6 +693,7 @@ pub fn on_window_closed(cx: &mut App) {
 
 fn window_closed(cx: &mut App) {
     let state = AppState::global(cx);
+    state.update(cx, |s, cx| s.forget_closed_windows(cx));
     let detail_gone = state
         .read(cx)
         .detail_window

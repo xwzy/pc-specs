@@ -307,6 +307,7 @@ pub fn show(state: Entity<AppState>, metric: Metric, anchor: Option<Anchor>, cx:
     };
     let display_id = options.display_id;
     match gpui_kit::open_window(options, cx, |window, cx| {
+        AppState::track_visibility(&state, window, cx);
         cx.new(|cx| {
             MetricPanel::new(
                 state.clone(),

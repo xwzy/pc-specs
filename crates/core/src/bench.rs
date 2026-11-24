@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,8 +39,6 @@ const MIN_SIZE: u64 = 32 << 20;
 const RESERVE: u64 = 64 << 20;
 /// 并行随机读用几个线程。
 pub const THREADS: usize = 8;
-/// 临时文件的名字。
-const FILE_NAME: &str = ".pc-specs-speedtest.tmp";
 /// 延迟样本最多记这么多个，免得极快的盘把内存撑大。
 const MAX_SAMPLES: usize = 1 << 20;
 
@@ -229,13 +229,21 @@ pub fn run(
     fs::create_dir_all(dir)?;
     let free = space::volume_of(dir).map(|volume| volume.total.saturating_sub(volume.used));
     let wanted = fit(options.size, free).ok_or(Error::NoSpace)?;
-    let path = dir.join(FILE_NAME);
-    // 正常结束、出错、被取消都把文件删掉。（Unix 上它早就不在目录里了，这里是兜底。）
-    let _remove = Remove(path.clone());
-    let (file, direct) = create(&path)?;
-    // 文件还开着，照常读写；但从目录里摘掉了：测到一半进程被杀，空间也会随进程退出归还。
+    check(cancel)?;
+    let temp = tempfile::Builder::new()
+        .prefix(".pc-specs-speedtest-")
+        .suffix(".tmp")
+        .make_in(dir, create)?;
+    let (opened, path) = temp.into_parts();
     #[cfg(unix)]
-    let _ = fs::remove_file(&path);
+    let mut path = path;
+    let (file, direct) = opened;
+    // A mounted filesystem can reject unlink while the handle is open.
+    // Keep the normal TempPath cleanup in that case; it runs after file drops.
+    #[cfg(unix)]
+    if fs::remove_file(&path).is_ok() {
+        path.disable_cleanup(true);
+    }
 
     let mut report = Report {
         taken: unix_now(),
@@ -326,15 +334,6 @@ fn check(cancel: &AtomicBool) -> Result<(), Error> {
         Err(Error::Cancelled)
     } else {
         Ok(())
-    }
-}
-
-/// 离开时（做完、出错、被取消）把临时文件删掉。
-struct Remove(PathBuf);
-
-impl Drop for Remove {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -554,10 +553,10 @@ fn percentile_us(samples: &mut [u32], p: f64) -> u32 {
     samples[index] / 1000
 }
 
-/// 创建测试文件（已有的就清空），尽量绕开系统缓存。第二个返回值是有没有绕开。
+/// 独占创建本次测速的临时文件，尽量绕开系统缓存。第二个返回值是有没有绕开。
 fn create(path: &Path) -> io::Result<(File, bool)> {
     let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(true);
+    options.read(true).write(true).create_new(true);
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -708,10 +707,24 @@ mod tests {
         assert_eq!(progress.report(), report);
         assert!(Phase::ALL.iter().all(|phase| progress.is_finished(*phase)));
         assert!(
-            !dir.join(FILE_NAME).exists(),
+            fs::read_dir(&dir).unwrap().next().is_none(),
             "the test file must be removed"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_existing_file_is_never_opened_for_writing() {
+        let dir = scratch("existing");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".pc-specs-speedtest.tmp");
+        fs::write(&path, b"keep").unwrap();
+        assert_eq!(
+            create(&path).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(path).unwrap(), b"keep");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     /// Unix 上文件一创建就从目录里摘掉了：测到一半进程被杀，也不会留下几个 GiB 的临时文件。
@@ -737,7 +750,10 @@ mod tests {
         }
         assert!(progress.is_finished(Phase::SeqWrite));
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        let existing = dir.join(".pc-specs-speedtest.tmp");
+        fs::write(&existing, b"keep").unwrap();
         worker.join().unwrap().expect("a report");
+        assert_eq!(fs::read(existing).unwrap(), b"keep");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -765,7 +781,7 @@ mod tests {
             started.elapsed() < Duration::from_secs(10),
             "stopped promptly"
         );
-        assert!(!dir.join(FILE_NAME).exists());
+        assert!(fs::read_dir(&dir).unwrap().next().is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 

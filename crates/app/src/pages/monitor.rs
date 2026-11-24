@@ -121,9 +121,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
         fmt::percent(mem),
         chart::area(
             "monitor-mem-chart",
-            chart::series(s, None, |t| {
-                fmt::ratio(t.mem_used_bytes, t.mem_total_bytes) as f64
-            }),
+            chart::series(s, None, |t| t.memory_percent as f64),
             Some((0.0, 100.0)),
             palette[1],
             |v| format!("{v:.0}%"),
@@ -187,7 +185,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
 
     // 温度：整机最高值，以及（如果能识别）CPU 温度。
     let hottest = latest.and_then(|t| t.max_temperature());
-    let has_temp = s.ticks.iter().any(|t| t.max_temperature().is_some());
+    let has_temp = s.ticks.iter().any(|t| t.max_temperature.is_some());
     if has_temp {
         cards.push(chart_card(
             "monitor-temp",
@@ -197,10 +195,10 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
                 "monitor-temp-chart",
                 chart::series2(s, None, move |t| {
                     let hot = t
-                        .max_temperature()
+                        .max_temperature
                         .map_or(0.0, |v| fmt::temp_chart_value(v, temp_unit));
                     let cpu = t
-                        .cpu_temperature()
+                        .cpu_temperature
                         .map_or(hot, |v| fmt::temp_chart_value(v, temp_unit));
                     (hot, cpu)
                 }),
@@ -238,7 +236,7 @@ pub fn render(s: &AppState, state: &Entity<AppState>, content_width: f32, cx: &A
         .collect();
     if let Some(first) = gpu_names.first().cloned() {
         let second = gpu_names.get(1).cloned();
-        let util_of = |tick: &pc_specs_core::model::MonitorTick, name: &str| {
+        let util_of = |tick: &crate::history::Sample, name: &str| {
             tick.gpus
                 .iter()
                 .find(|g| g.name == name)

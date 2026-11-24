@@ -328,7 +328,7 @@ struct Item {
 
 /// 位置第一层里该处理的项目（去掉保留的、太新的）。
 /// 位置本身必须是真正的文件夹；符号链接不算，免得顺着它清到别处去。
-fn items(root: &Root) -> io::Result<Vec<Item>> {
+fn items(root: &Root, cancel: &AtomicBool) -> io::Result<Vec<Item>> {
     if !fs::symlink_metadata(&root.path)?.file_type().is_dir() {
         return Ok(Vec::new());
     }
@@ -341,6 +341,9 @@ fn items(root: &Root) -> io::Result<Vec<Item>> {
     let now = SystemTime::now();
     let mut found = Vec::new();
     for entry in fs::read_dir(&root.path)?.flatten() {
+        if cancel.load(Relaxed) {
+            return Ok(Vec::new());
+        }
         let name = entry.file_name().to_string_lossy().into_owned();
         if kept(&name, &root.keep) {
             continue;
@@ -388,7 +391,10 @@ pub fn measure(spec: &Spec, cancel: &AtomicBool) -> Measured {
     let mut best = 0;
     let mut named: BTreeMap<String, u64> = BTreeMap::new();
     for root in &spec.roots {
-        let items = match items(root) {
+        if cancel.load(Relaxed) {
+            break;
+        }
+        let items = match items(root, cancel) {
             Ok(items) => items,
             Err(error) => {
                 out.blocked |= error.kind() == io::ErrorKind::PermissionDenied;
@@ -444,7 +450,12 @@ pub struct Cleaned {
 pub fn clean(spec: &Spec, progress: &Progress, cancel: &AtomicBool) -> Cleaned {
     let mut cleaned = Cleaned::default();
     for root in &spec.roots {
-        let Ok(items) = items(root) else { continue };
+        if cancel.load(Relaxed) {
+            break;
+        }
+        let Ok(items) = items(root, cancel) else {
+            continue;
+        };
         let results: Vec<Option<bool>> = items
             .par_iter()
             .map(|item| clean_item(&item.path, progress, cancel, space::usage))

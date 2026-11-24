@@ -300,6 +300,13 @@ pub struct Archive {
     sizes: Arc<[AtomicU64; 2]>,
 }
 
+/// Small persisted counters and event logs share the serial history writer.
+#[derive(PartialEq, Eq)]
+pub enum Record {
+    Usage,
+    RuleEvents,
+}
+
 enum Job {
     Save {
         tier: usize,
@@ -308,12 +315,13 @@ enum Job {
         ring: Ring,
     },
     Remove(Vec<PathBuf>),
+    Record(Record, Box<dyn FnOnce() + Send>),
     /// 排在它前面的活都干完了。
     Done(mpsc::Sender<()>),
 }
 
 /// Coalesce pending writes instead of accumulating whole history snapshots when
-/// storage is slow. There are at most two saves, one removal and one barrier.
+/// storage is slow. Keep one pending write per tier or record, plus removal and shutdown.
 struct HistoryWriter {
     wake: mpsc::SyncSender<()>,
     pending: Arc<Mutex<VecDeque<Job>>>,
@@ -326,6 +334,7 @@ impl HistoryWriter {
             (Job::Save { tier, .. }, Job::Save { tier: old, .. }) => tier != old,
             (Job::Remove(_), Job::Save { .. } | Job::Remove(_)) => false,
             (Job::Done(_), Job::Done(_)) => false,
+            (Job::Record(key, _), Job::Record(old, _)) => key != old,
             _ => true,
         });
         pending.push_back(job);
@@ -411,6 +420,13 @@ impl Archive {
             Ok(_) => self.writer = Some(HistoryWriter { wake, pending }),
             Err(e) => tracing::error!("failed to start the history thread: {e}"),
         }
+    }
+
+    pub fn queue_record(&mut self, key: Record, write: impl FnOnce() + Send + 'static) -> bool {
+        self.ensure_writer();
+        self.writer
+            .as_ref()
+            .is_some_and(|writer| writer.send(Job::Record(key, Box::new(write))))
     }
 
     /// 记下一个采样。`at` 是采样时刻（Unix 毫秒）。
@@ -585,6 +601,7 @@ fn run_writer(
                         size.store(0, Ordering::Relaxed);
                     }
                 }
+                Job::Record(_, write) => write(),
                 Job::Done(ack) => {
                     let _ = ack.send(());
                 }
@@ -773,6 +790,54 @@ mod tests {
             pending.lock().unwrap().front(),
             Some(Job::Remove(_))
         ));
+    }
+
+    #[test]
+    fn slow_storage_keeps_only_the_latest_usage_and_rule_log() {
+        let mut archive = Archive::in_memory();
+        let (release, stalled) = mpsc::channel();
+        let (started, ready) = mpsc::channel();
+        archive.queue_record(Record::Usage, move || {
+            started.send(()).unwrap();
+            stalled.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (result, writes) = mpsc::channel();
+        for seq in 0..1000 {
+            for (key, name) in [(Record::Usage, "usage"), (Record::RuleEvents, "rules")] {
+                let result = result.clone();
+                assert!(archive.queue_record(key, move || {
+                    result.send((name, seq)).unwrap();
+                }));
+            }
+        }
+        release.send(()).unwrap();
+        archive.shutdown();
+        assert_eq!(
+            writes.try_iter().collect::<Vec<_>>(),
+            [("usage", 999), ("rules", 999)]
+        );
+    }
+
+    #[test]
+    fn three_months_of_samples_keep_only_the_configured_history() {
+        let mut archive = Archive::in_memory();
+        // Cross both retention windows repeatedly without sleeping or writing to disk.
+        let end = 90 * 24 * 60 * 60_000_u64;
+        for at in (0..=end).step_by(30_000) {
+            archive.record(at, |_| Some(25.0));
+        }
+        for tier in &archive.tiers {
+            let ring = tier.snapshot();
+            let last = end / tier.spec.width;
+            assert_eq!(ring.cells.len(), tier.spec.capacity);
+            assert_eq!(ring.end(), last + 1);
+            assert!(ring.get(last - tier.spec.capacity as u64).is_none());
+            assert_eq!(
+                ring.get(last).unwrap().avg[Channel::Cpu.index()],
+                quantize(Channel::Cpu, 25.0)
+            );
+        }
     }
 
     #[test]

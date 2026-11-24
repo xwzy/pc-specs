@@ -91,18 +91,15 @@ fn read_sockets() -> Option<Vec<Socket>> {
     use std::time::Duration;
 
     let mut sockets = Vec::new();
-    let mut any = false;
     for protocol in ["tcp", "udp"] {
-        if let Some(text) = run_stdout_timeout(
+        let text = run_stdout_timeout(
             "/usr/sbin/netstat",
             &["-anv", "-p", protocol],
             Duration::from_secs(3),
-        ) {
-            any = true;
-            sockets.extend(parse_netstat(&text));
-        }
+        )?;
+        sockets.extend(parse_netstat(&text));
     }
-    any.then_some(sockets)
+    Some(sockets)
 }
 
 #[cfg(not(target_os = "macos"))]

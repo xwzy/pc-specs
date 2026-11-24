@@ -228,6 +228,9 @@ fn probe_with(
 
 /// 同时连这几个地址，返回最快有回应的那个（下标，耗时毫秒）。
 fn fastest(addrs: &[SocketAddr], interface: Option<NonZeroU32>) -> Option<(usize, f32)> {
+    if let [addr] = addrs {
+        return connect_rtt(addr, interface).map(|rtt| (0, rtt));
+    }
     let (tx, rx) = std::sync::mpsc::channel();
     for (index, addr) in addrs.iter().copied().enumerate() {
         let tx = tx.clone();

@@ -4,12 +4,12 @@
 //! 否则它们共享默认 id（取自调用位置），悬停状态与路径缓存会互相串扰。
 
 use crate::fmt;
+use crate::history::Sample;
 use crate::state::AppState;
 use gpui_kit::component::{ActiveTheme as _, chart::AreaChart, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Hsla, IntoElement as _, ParentElement as _, SharedString, Styled as _, div, px,
 };
-use pc_specs_core::model::MonitorTick;
 
 /// 单序列图表的一个点。
 #[derive(Clone)]
@@ -27,14 +27,13 @@ pub struct Point2 {
 }
 
 /// 最近 `last` 个采样（`None` 表示全部）里取一个值。
-pub fn series(s: &AppState, last: Option<usize>, f: impl Fn(&MonitorTick) -> f64) -> Vec<Point> {
+pub fn series(s: &AppState, last: Option<usize>, f: impl Fn(&Sample) -> f64) -> Vec<Point> {
     let skip = last.map_or(0, |n| s.ticks.len().saturating_sub(n));
     s.ticks
         .iter()
-        .zip(s.tick_labels.iter())
         .skip(skip)
-        .map(|(tick, label)| Point {
-            label: label.clone(),
+        .map(|tick| Point {
+            label: tick.label.clone(),
             value: f(tick),
         })
         .collect()
@@ -43,17 +42,16 @@ pub fn series(s: &AppState, last: Option<usize>, f: impl Fn(&MonitorTick) -> f64
 pub fn series2(
     s: &AppState,
     last: Option<usize>,
-    f: impl Fn(&MonitorTick) -> (f64, f64),
+    f: impl Fn(&Sample) -> (f64, f64),
 ) -> Vec<Point2> {
     let skip = last.map_or(0, |n| s.ticks.len().saturating_sub(n));
     s.ticks
         .iter()
-        .zip(s.tick_labels.iter())
         .skip(skip)
-        .map(|(tick, label)| {
+        .map(|tick| {
             let (a, b) = f(tick);
             Point2 {
-                label: label.clone(),
+                label: tick.label.clone(),
                 a,
                 b,
             }
